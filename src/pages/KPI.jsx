@@ -326,14 +326,14 @@ function KPI() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition font-medium text-xs"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 font-medium text-xs shadow-sm hover:shadow-md hover:scale-105"
           >
             <Upload className="w-3.5 h-3.5" />
             Upload
           </button>
           <button
             onClick={() => exportData('excel')}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-medium text-xs"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 font-medium text-xs hover:shadow-md"
           >
             <Download className="w-3.5 h-3.5" />
             Export
@@ -355,7 +355,7 @@ function KPI() {
                 placeholder="Region or hub..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-2.5 pr-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white placeholder-slate-400"
+                className="w-full pl-2.5 pr-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white placeholder-slate-400 hover:bg-slate-700"
               />
             </div>
           </div>
@@ -368,7 +368,7 @@ function KPI() {
               type="date"
               value={filters.dateFrom}
               onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             />
           </div>
           <div>
@@ -380,7 +380,7 @@ function KPI() {
               type="date"
               value={filters.dateTo}
               onChange={(e) => handleFilterChange('dateTo', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             />
           </div>
           <div>
@@ -391,7 +391,7 @@ function KPI() {
             <select
               value={filters.subRegion}
               onChange={(e) => handleFilterChange('subRegion', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             >
               <option value="" className="bg-slate-700">All Sub Regions</option>
               {uniqueSubRegions.map(subRegion => (
@@ -407,7 +407,7 @@ function KPI() {
             <select
               value={filters.operatorHub}
               onChange={(e) => handleFilterChange('operatorHub', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             >
               <option value="" className="bg-slate-700">All Hubs</option>
               {uniqueHubs.map(hub => (
@@ -419,14 +419,14 @@ function KPI() {
         <div className="mt-2.5 flex justify-end gap-2">
           <button
             onClick={applyFilters}
-            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition shadow-sm"
+            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 shadow-sm hover:shadow-md hover:scale-105"
           >
             <Search className="w-3 h-3" />
             Apply
           </button>
           <button
             onClick={clearFilters}
-            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition border border-slate-600"
+            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 border border-slate-600 hover:border-slate-500"
             title="Clear filters"
           >
             <X className="w-3 h-3" />
@@ -460,7 +460,7 @@ function KPI() {
             </thead>
             <tbody className="divide-y divide-slate-700">
               {filteredData.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-700/50 transition-colors">
+                <tr key={row.id} className="hover:bg-slate-700/50 transition-all duration-200">
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.date}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs font-semibold text-white">{row.region}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.sub_region}</td>
@@ -504,13 +504,13 @@ function KPI() {
               <h3 className="text-base font-semibold text-white">Upload KPI Data</h3>
               <button
                 onClick={() => setShowUploadModal(false)}
-                className="p-1 text-slate-400 hover:text-white transition"
+                className="p-1 text-slate-400 hover:text-white transition-all duration-200 hover:scale-110"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
             <div className="p-4 space-y-3">
-              <div className="border-2 border-dashed border-slate-600 rounded-lg p-6 text-center hover:border-maroon-500 transition">
+              <div className="border-2 border-dashed border-slate-600 rounded-xl p-6 text-center hover:border-maroon-500 transition-all duration-200 hover:bg-slate-800/50">
                 <Upload className="w-10 h-10 text-slate-400 mx-auto mb-3" />
                 <p className="text-slate-300 mb-1 text-sm">Drop your file here or click to browse</p>
                 <p className="text-slate-500 text-xs mb-3">Supports CSV and Excel files</p>
@@ -524,7 +524,7 @@ function KPI() {
                 />
                 <label
                   htmlFor="kpi-file-upload"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 cursor-pointer shadow-sm hover:shadow-md"
                 >
                   <Upload className="w-3.5 h-3.5" />
                   Choose File
@@ -538,7 +538,7 @@ function KPI() {
             <div className="flex justify-end gap-3 p-4 border-t border-slate-700">
               <button
                 onClick={() => setShowUploadModal(false)}
-                className="px-3 py-1.5 text-xs border border-slate-600 hover:bg-slate-700 text-slate-300 rounded-lg transition"
+                className="px-3 py-1.5 text-xs border border-slate-600 hover:bg-slate-700 text-slate-300 rounded-lg transition-all duration-200 hover:border-slate-500"
               >
                 Cancel
               </button>

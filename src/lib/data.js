@@ -114,6 +114,8 @@ export async function getPerformanceRecords(filters = {}) {
   const pageSize = 1000
   let hasMore = true
 
+  console.log('getPerformanceRecords: Starting fetch...')
+
   while (hasMore) {
     let query = supabase
       .from('performance_records')
@@ -130,6 +132,8 @@ export async function getPerformanceRecords(filters = {}) {
 
     const { data, error } = await query
     
+    console.log(`getPerformanceRecords: Page ${page}, fetched ${data?.length || 0} records, error:`, error)
+    
     if (error) {
       return { data: allData, error }
     }
@@ -138,11 +142,13 @@ export async function getPerformanceRecords(filters = {}) {
       allData.push(...data)
       page++
       hasMore = data.length === pageSize
+      console.log(`getPerformanceRecords: Total so far: ${allData.length}, hasMore: ${hasMore}`)
     } else {
       hasMore = false
     }
   }
 
+  console.log(`getPerformanceRecords: Finished with ${allData.length} total records`)
   return { data: allData, error: null }
 }
 

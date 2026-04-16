@@ -69,16 +69,6 @@ function Rider() {
       setLoading(false)
     }
     fetchData()
-    
-    // Refresh data when window regains focus (user returns to tab)
-    const handleFocus = () => {
-      fetchData()
-    }
-    window.addEventListener('focus', handleFocus)
-    
-    return () => {
-      window.removeEventListener('focus', handleFocus)
-    }
   }, [])
 
   // Debounced search handler
@@ -163,8 +153,23 @@ function Rider() {
   )
 
   const handlePageChange = (page) => {
+    console.log('Page changed to:', page)
     setCurrentPage(page)
   }
+  
+  // Debug pagination
+  useEffect(() => {
+    console.log('Pagination debug:', {
+      currentPage,
+      totalPages,
+      startIndex,
+      itemsPerPage,
+      filteredDataLength: filteredData.length,
+      paginatedDataLength: paginatedData.length,
+      firstItem: paginatedData[0]?.rider_id,
+      lastItem: paginatedData[paginatedData.length - 1]?.rider_id
+    })
+  }, [currentPage, paginatedData, startIndex, totalPages, filteredData.length])
 
   if (loading) {
     return (
@@ -209,7 +214,7 @@ function Rider() {
                 placeholder="Name or ID..."
                 value={searchTerm}
                 onChange={(e) => handleSearchChange(e.target.value)}
-                className="w-full pl-2.5 pr-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-md focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white placeholder-slate-400"
+                className="w-full pl-2.5 pr-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white placeholder-slate-400 hover:bg-slate-700"
               />
             </div>
           </div>
@@ -224,7 +229,7 @@ function Rider() {
                 setStatusFilter(e.target.value)
                 applyFilters(searchTerm, e.target.value, operatorHubFilter)
               }}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-md focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             >
               <option value="" className="bg-slate-700">All Status</option>
               <option value="Active" className="bg-slate-700">Active</option>
@@ -242,7 +247,7 @@ function Rider() {
                 setOperatorHubFilter(e.target.value)
                 applyFilters(searchTerm, statusFilter, e.target.value)
               }}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-md focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             >
               <option value="" className="bg-slate-700">All Hubs</option>
               {uniqueOperatorHubs.map(hub => (
@@ -268,8 +273,8 @@ function Rider() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
-              {paginatedData.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-700/50 transition-colors">
+              {paginatedData.map((row, index) => (
+                <tr key={row.rider_id || row.id || index} className="hover:bg-slate-700/50 transition-all duration-200 group">
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs font-semibold text-white">{row.rider_id}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-300">{row.rider_name}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.operator_hub}</td>
@@ -302,7 +307,7 @@ function Rider() {
             <button
               onClick={() => handlePageChange(currentPage - 1)}
               disabled={currentPage === 1}
-              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-md hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-lg hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-sm"
             >
               Previous
             </button>
@@ -315,7 +320,7 @@ function Rider() {
                   <button
                     key={pageNum}
                     onClick={() => handlePageChange(pageNum)}
-                    className={`min-w-[1.75rem] h-7 text-xs font-semibold rounded-md transition-all flex-shrink-0 ${
+                    className={`min-w-[1.75rem] h-7 text-xs font-semibold rounded-lg transition-all duration-200 flex-shrink-0 ${
                       currentPage === pageNum
                         ? 'bg-maroon-600 text-white shadow-sm'
                         : 'border border-slate-600 hover:bg-slate-700 hover:border-slate-500 text-slate-300'
@@ -330,7 +335,7 @@ function Rider() {
             <button
               onClick={() => handlePageChange(currentPage + 1)}
               disabled={currentPage === totalPages}
-              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-md hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-lg hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-sm"
             >
               Next
             </button>

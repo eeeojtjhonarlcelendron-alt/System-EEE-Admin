@@ -51,10 +51,10 @@ function Layout({ onLogout }) {
         sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       } ${sidebarCollapsed ? 'w-20' : 'w-72'}`}>
         {/* Logo */}
-        <div className="p-4 border-b border-slate-800">
+        <div className={`border-b border-slate-800 ${sidebarCollapsed ? 'p-2' : 'p-4'}`}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
+            <div className={`flex items-center ${sidebarCollapsed ? 'gap-1' : 'gap-3'}`}>
+              <div className={`${sidebarCollapsed ? 'w-8 h-8' : 'w-12 h-12'} bg-white rounded-xl shadow-lg flex items-center justify-center flex-shrink-0 overflow-hidden`}>
                 <img 
                   src="/logo.png" 
                   alt="East Equator" 
@@ -63,11 +63,18 @@ function Layout({ onLogout }) {
               </div>
               {!sidebarCollapsed && (
                 <div>
-                  <h1 className="text-lg font-bold text-white">Performance Management</h1>
-                  <p className="text-xs text-slate-400">East Equator Express Philippines Inc.</p>
+                  <h1 className="text-base font-bold text-white">Performance Management</h1>
+                  <p className="text-[10px] text-slate-400">East Equator Express Philippines Inc.</p>
                 </div>
               )}
             </div>
+            <button
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="hidden lg:flex items-center justify-center w-8 h-8 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-all duration-200 hover:scale-105 flex-shrink-0"
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+            </button>
             <button 
               onClick={() => setSidebarOpen(false)}
               className="lg:hidden text-slate-400 hover:text-white"
@@ -86,16 +93,16 @@ function Layout({ onLogout }) {
                 to="/dashboard"
                 onClick={() => setSidebarOpen(false)}
                 className={({ isActive }) =>
-                  `flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3 px-4'} py-3 rounded-lg transition ${
+                  `flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
                     isActive
-                      ? 'bg-maroon-600 text-white font-medium'
-                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-maroon-600 text-white font-medium shadow-lg shadow-maroon-600/25'
+                      : 'text-slate-400 hover:bg-slate-800/80 hover:text-white hover:translate-x-1'
                   }`
                 }
                 title="Dashboard"
               >
                 <LayoutDashboard className="w-5 h-5 flex-shrink-0" />
-                {!sidebarCollapsed && <span>Dashboard</span>}
+                {!sidebarCollapsed && <span className="text-xs">Dashboard</span>}
               </NavLink>
             </li>
 
@@ -103,16 +110,16 @@ function Layout({ onLogout }) {
             <li>
               <button
                 onClick={() => !sidebarCollapsed && setDataManagementOpen(!dataManagementOpen)}
-                className={`flex items-center w-full ${sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-4'} py-3 rounded-lg transition ${
+                className={`flex items-center w-full ${sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-4'} py-3 rounded-xl transition-all duration-200 ${
                   isDataManagementActive
-                    ? 'bg-maroon-600 text-white font-medium'
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                    ? 'bg-maroon-600 text-white font-medium shadow-lg shadow-maroon-600/25'
+                    : 'text-slate-400 hover:bg-slate-800/80 hover:text-white hover:translate-x-1'
                 }`}
                 title="Data Management"
               >
                 <div className={`flex items-center ${sidebarCollapsed ? '' : 'gap-3'}`}>
                   <Database className="w-5 h-5 flex-shrink-0" />
-                  {!sidebarCollapsed && <span>Data Management</span>}
+                  {!sidebarCollapsed && <span className="text-xs">Data Management</span>}
                 </div>
                 {!sidebarCollapsed && (
                   <ChevronDown className={`w-4 h-4 transition-transform ${dataManagementOpen ? 'rotate-180' : ''}`} />
@@ -126,7 +133,7 @@ function Layout({ onLogout }) {
                       to="/data-management/performance"
                       onClick={() => setSidebarOpen(false)}
                       className={({ isActive }) =>
-                        `flex items-center gap-3 px-4 py-2 rounded-lg transition text-sm ${
+                        `flex items-center text-xs gap-3 px-4 py-2 rounded-lg transition ${
                           isActive
                             ? 'bg-maroon-600/50 text-maroon-400 font-medium'
                             : 'text-slate-400 hover:bg-slate-800 hover:text-white'
@@ -142,7 +149,7 @@ function Layout({ onLogout }) {
                       to="/data-management/kpi"
                       onClick={() => setSidebarOpen(false)}
                       className={({ isActive }) =>
-                        `flex items-center gap-3 px-4 py-2 rounded-lg transition text-sm ${
+                        `flex items-center text-xs gap-3 px-4 py-2 rounded-lg transition ${
                           isActive
                             ? 'bg-maroon-600/50 text-maroon-400 font-medium'
                             : 'text-slate-400 hover:bg-slate-800 hover:text-white'
@@ -158,7 +165,7 @@ function Layout({ onLogout }) {
                       to="/data-management/rider"
                       onClick={() => setSidebarOpen(false)}
                       className={({ isActive }) =>
-                        `flex items-center gap-3 px-4 py-2 rounded-lg transition text-sm ${
+                        `flex items-center text-xs gap-3 px-4 py-2 rounded-lg transition ${
                           isActive
                             ? 'bg-maroon-600/50 text-maroon-400 font-medium'
                             : 'text-slate-400 hover:bg-slate-800 hover:text-white'
@@ -179,11 +186,11 @@ function Layout({ onLogout }) {
         <div className="absolute bottom-0 left-0 right-0 p-2 border-t border-slate-800">
           <button
             onClick={onLogout}
-            className={`flex items-center w-full text-slate-400 hover:bg-red-900/30 hover:text-red-400 rounded-lg transition ${sidebarCollapsed ? 'justify-center py-3 px-2' : 'gap-3 px-4 py-3'}`}
+            className={`flex items-center w-full text-slate-400 hover:bg-red-500/10 hover:text-red-400 rounded-xl transition-all duration-200 ${sidebarCollapsed ? 'justify-center py-3 px-2' : 'gap-3 px-4 py-3'}`}
             title="Logout"
           >
             <LogOut className="w-5 h-5 flex-shrink-0" />
-            {!sidebarCollapsed && <span>Logout</span>}
+            {!sidebarCollapsed && <span className="text-sm">Logout</span>}
           </button>
         </div>
       </aside>
@@ -192,7 +199,7 @@ function Layout({ onLogout }) {
       <main className={`${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-72'} min-h-screen bg-slate-900 transition-all duration-300`}>
         {/* Header */}
         <header 
-          className="border-b border-slate-800 p-4 flex items-center justify-between z-[60] backdrop-blur-sm h-28 w-full relative bg-slate-800"
+          className="border-b border-slate-800/50 p-4 flex items-center justify-between z-[60] backdrop-blur-md h-28 w-full relative bg-slate-800/80"
         >
           {/* Background image at 50% opacity */}
           <div 
@@ -213,14 +220,7 @@ function Layout({ onLogout }) {
             >
               <Menu className="w-6 h-6" />
             </button>
-            <button
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="hidden lg:flex items-center justify-center w-8 h-8 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition"
-              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-              {sidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
-            </button>
-            <h1 className="text-xl font-semibold text-white">{pageTitle}</h1>
+            <h1 className="text-xl font-bold text-white tracking-tight">{pageTitle}</h1>
           </div>
           <div></div>
         </header>

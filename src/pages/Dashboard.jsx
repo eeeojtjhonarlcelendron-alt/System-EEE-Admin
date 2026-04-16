@@ -186,11 +186,16 @@ function Dashboard() {
   const [selectedHub, setSelectedHub] = useState('')
   const [hubSearchTerm, setHubSearchTerm] = useState('')
   const [showHubDropdown, setShowHubDropdown] = useState(false)
+  const [selectedRider, setSelectedRider] = useState('')
+  const [riderSearchTerm, setRiderSearchTerm] = useState('')
+  const [showRiderDropdown, setShowRiderDropdown] = useState(false)
   const [selectedRegion, setSelectedRegion] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
-  const [dashboardView, setDashboardView] = useState('hub') // 'hub' or 'overall'
+  const [dashboardView, setDashboardView] = useState('hub') // 'hub', 'rider', or 'overall'
   const [selectedDate, setSelectedDate] = useState('') // empty by default
   const [retentionView, setRetentionView] = useState('MTD') // 'MTD' or 'L7D' for Retention & Attrition
+  const [riderTrendView, setRiderTrendView] = useState('MTD') // 'MTD' or 'L7D' for Rider Delivery Trend
+  const [riderTrendMetric, setRiderTrendMetric] = useState('delivered') // 'delivered', 'onHold', 'successRate', 'productivity'
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   // Fetch all data
@@ -424,7 +429,7 @@ function Dashboard() {
           setUniqueRegions(subRegions)
         }
       } catch (error) {
-        console.error('Error fetching dashboard data:', error)
+        // Error fetching dashboard data
       }
       
       setLoading(false)
@@ -459,38 +464,53 @@ function Dashboard() {
     )
   }, [uniqueHubs, hubSearchTerm])
 
+  // Get unique riders for filter - from ridersData
+  const uniqueRiders = useMemo(() => {
+    const riders = ridersData.map(rider => ({
+      id: rider.rider_id,
+      name: rider.rider_name
+    })).filter(r => r.id && r.name)
+    // Remove duplicates by ID
+    const seen = new Set()
+    return riders.filter(rider => {
+      if (seen.has(rider.id)) return false
+      seen.add(rider.id)
+      return true
+    }).sort((a, b) => a.name.localeCompare(b.name))
+  }, [ridersData])
+
+  // Filter riders based on search term
+  const filteredRiders = useMemo(() => {
+    if (!riderSearchTerm) return uniqueRiders
+    
+    const filtered = uniqueRiders.filter(rider => 
+      rider.name.toLowerCase().includes(riderSearchTerm.toLowerCase()) ||
+      String(rider.id).toLowerCase().includes(riderSearchTerm.toLowerCase())
+    )
+    return filtered
+  }, [uniqueRiders, riderSearchTerm])
+
   // Calculate Riders No Route: Show riders from Rider table NOT in Performance table
   const filteredRidersNoRoute = useMemo(() => {
-    console.log('Riders No Route useMemo running:', {
-      ridersDataLength: ridersData.length,
-      performanceRecordsLength: performanceRecords.length,
-      selectedHub,
-      selectedDate
-    })
-    
     if (!ridersData.length) {
-      console.log('Riders No Route: No riders data, returning []')
+      return []
+    }
+    
+    // Only show data when both hub and date are selected
+    if (!selectedHub || !selectedDate) {
       return []
     }
     
     let filtered = ridersData
-    console.log('Riders No Route: Starting with', filtered.length, 'riders from Rider table')
     
-    // Filter by hub if selected
-    if (selectedHub && selectedHub !== 'All Hubs') {
-      filtered = filtered.filter(rider => rider.operator_hub === selectedHub)
-      console.log('Riders No Route: After hub filter', filtered.length, 'riders')
-    }
+    // Filter by hub
+    filtered = filtered.filter(rider => rider.operator_hub === selectedHub)
     
-    // Filter by date if selected (check if rider has performance records for that date)
-    let performanceToCheck = performanceRecords
-    if (selectedDate) {
-      performanceToCheck = performanceRecords.filter(p => {
-        const recordDate = p.date?.split('T')[0] || p.date
-        return recordDate === selectedDate
-      })
-      console.log('Riders No Route: Performance records for date', selectedDate, ':', performanceToCheck.length)
-    }
+    // Filter performance records by date
+    let performanceToCheck = performanceRecords.filter(p => {
+      const recordDate = p.date?.split('T')[0] || p.date
+      return recordDate === selectedDate
+    })
     
     // Create Set of rider IDs that exist in performance records
     const ridersInPerformance = new Set()
@@ -499,7 +519,6 @@ function Dashboard() {
       if (p.driver_name) ridersInPerformance.add(p.driver_name)
       if (p.operator_id) ridersInPerformance.add(String(p.operator_id))
     })
-    console.log('Riders No Route: Riders in performance table:', ridersInPerformance.size)
     
     // Find riders from Rider table that are NOT in Performance table
     const ridersNoRoute = filtered
@@ -516,9 +535,6 @@ function Dashboard() {
         
         // Show rider if NOT in performance table
         const hasNoRoute = !existsInPerformance
-        if (hasNoRoute) {
-          console.log('Riders No Route: Including', rider.rider_name, '(ID:', rider.rider_id, ', Hub:', rider.operator_hub, ')')
-        }
         return hasNoRoute
       })
       .map(rider => ({
@@ -529,8 +545,6 @@ function Dashboard() {
         hub: rider.operator_hub || 'Unknown'
       }))
     
-    console.log('Riders No Route: Total riders not in performance table:', ridersNoRoute.length)
-    console.log('Riders No Route: List:', ridersNoRoute.map(r => r.riderName))
     return ridersNoRoute
   }, [ridersData, performanceRecords, selectedHub, selectedDate])
 
@@ -554,26 +568,16 @@ function Dashboard() {
   // Filtered stats based on hub/region and date selection - using dashboard_metrics
   // In Overall view with selectedRegion, shows all hubs in that region
   const filteredStats = useMemo(() => {
-    console.log('Metric Cards Debug:', {
-      dashboardMetricsLength: dashboardMetrics?.length,
-      selectedHub,
-      selectedRegion,
-      selectedDate,
-      dashboardView,
-      sampleData: dashboardMetrics?.[0]
-    })
     
     let filtered = dashboardMetrics
     
     // In Overall view with selectedRegion: filter hubs in that region
     if (dashboardView === 'overall' && selectedRegion) {
       filtered = filtered.filter(item => hubToRegionMap[item.hub] === selectedRegion)
-      console.log('After region filter (Overall):', filtered.length)
     }
     // In Hub view with selectedHub: filter by specific hub
     else if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
       filtered = filtered.filter(item => item.hub === selectedHub)
-      console.log('After hub filter (Hub):', filtered.length)
     }
     
     // Filter by date if selected
@@ -582,12 +586,10 @@ function Dashboard() {
         const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
         return itemDate === selectedDate
       })
-      console.log('After date filter:', filtered.length)
     }
     
     // For hub view: if no filters selected, show 0
     if (dashboardView === 'hub' && !selectedHub && !selectedDate) {
-      console.log('No filters selected in hub view, returning 0')
       return {
         successRate: 0,
         activeRiders: 0,
@@ -601,7 +603,6 @@ function Dashboard() {
     
     // For overall view: if no region and no date selected, show 0
     if (dashboardView === 'overall' && !selectedRegion && !selectedDate) {
-      console.log('No filters selected in overall view, returning 0')
       return {
         successRate: 0,
         activeRiders: 0,
@@ -616,7 +617,6 @@ function Dashboard() {
     // Calculate averages from filtered dashboard_metrics
     const total = filtered.length
     if (total === 0) {
-      console.log('No matching data after filters')
       return {
         successRate: 0,
         activeRiders: 0,
@@ -636,7 +636,6 @@ function Dashboard() {
     const avgClearFloor = Math.round(filtered.reduce((sum, item) => sum + (item.clear_floor_rate || 0), 0) / total)
     const avgScorecard = (filtered.reduce((sum, item) => sum + (item.scorecard || 0), 0) / total).toFixed(1)
     
-    console.log('Final stats:', { avgSuccessRate, avgRiders, avgDelivered, avgOnHold, avgProductivity, avgClearFloor, avgScorecard })
     
     return {
       successRate: avgSuccessRate,
@@ -738,14 +737,13 @@ function Dashboard() {
       // Call the refresh function via Supabase RPC
       const { data, error } = await supabase.rpc('refresh_dashboard_metrics')
       if (error) {
-        console.error('Error refreshing dashboard metrics:', error)
+        // Error refreshing dashboard metrics
       } else {
-        console.log('Dashboard metrics refreshed successfully')
-        // Refetch data to get updated metrics
+          // Refetch data to get updated metrics
         window.location.reload()
       }
     } catch (error) {
-      console.error('Error:', error)
+      // Error occurred
     } finally {
       setIsRefreshing(false)
     }
@@ -809,6 +807,14 @@ function Dashboard() {
       }))
   }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap])
 
+  // Normalize chart data for smooth animations - always uses "value" as dataKey
+  const normalizedChartData = useMemo(() => {
+    return filteredChartData.map(item => ({
+      month: item.month,
+      value: item[selectedCategory] || 0
+    }))
+  }, [filteredChartData, selectedCategory])
+
   // Close hub dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -820,6 +826,18 @@ function Dashboard() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showHubDropdown])
+
+  // Close rider dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showRiderDropdown && !event.target.closest('.rider-search-container')) {
+        setShowRiderDropdown(false)
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showRiderDropdown])
 
   // Calculate Retention & Attrition metrics from riders data - filtered by hub and MTD/L7D
   const retentionMetrics = useMemo(() => {
@@ -907,6 +925,11 @@ function Dashboard() {
   // Calculate P7D vs L7D comparison data for Overall view using REAL data
   const getComparisonData = useMemo(() => {
     return () => {
+      // If no region or date is selected, return empty data
+      if (!selectedRegion && !selectedDate) {
+        return []
+      }
+      
       // Get all unique hubs from dashboardMetrics
       let hubs = [...new Set(dashboardMetrics.map(item => item.hub).filter(Boolean))]
       
@@ -961,6 +984,17 @@ function Dashboard() {
           return Math.round(sum / records.length)
         }
         
+        // Calculate sum helper for totals
+        const calcSum = (records, field) => {
+          return records.reduce((acc, item) => acc + (item[field] || 0), 0)
+        }
+        
+        // Count unique riders
+        const countRiders = (records) => {
+          const uniqueRiders = new Set(records.map(r => r.rider_id || r.operator_id).filter(Boolean))
+          return uniqueRiders.size
+        }
+        
         return {
           hub: hub.replace('OP ', '').replace(' Cebu Hub', ''),
           // Clear Floor Rate
@@ -974,67 +1008,179 @@ function Dashboard() {
           kpiL7D: calcAvg(l7dRecords, 'scorecard', false),
           // Productivity
           prodP7D: calcAvg(p7dRecords, 'productivity', true),
-          prodL7D: calcAvg(l7dRecords, 'productivity', true)
+          prodL7D: calcAvg(l7dRecords, 'productivity', true),
+          // Loss (on_hold total)
+          lossP7D: calcSum(p7dRecords, 'on_hold'),
+          lossL7D: calcSum(l7dRecords, 'on_hold'),
+          // Rider Count
+          ridersP7D: countRiders(p7dRecords),
+          ridersL7D: countRiders(l7dRecords)
         }
-      }).filter(hub => hub.cfrL7D > 0 || hub.srL7D > 0 || hub.kpiL7D > 0 || hub.prodL7D > 0) // Only show hubs with data
+      }).filter(hub => hub.cfrL7D > 0 || hub.srL7D > 0 || hub.kpiL7D > 0 || hub.prodL7D > 0 || hub.lossL7D > 0 || hub.ridersL7D > 0) // Only show hubs with data
     }
   }, [dashboardMetrics, selectedRegion, hubToRegionMap])
 
   // Calculate Rider Level data: Individual riders with their metrics
   const riderLevelData = useMemo(() => {
-    if (!performanceRecords.length) return []
-    
-    // Filter performance records by hub and date
-    let filtered = performanceRecords
-    
-    if (selectedHub && selectedHub !== 'All Hubs') {
-      filtered = filtered.filter(p => p.operator_hub === selectedHub)
+    // If no rider is selected, return empty array
+    if (!selectedRider) {
+      return []
     }
-    
+
+    // Filter performance records by date
+    let filtered = performanceRecords
+
     if (selectedDate) {
       filtered = filtered.filter(p => {
         const recordDate = p.date?.split('T')[0] || p.date
         return recordDate === selectedDate
       })
     }
-    
-    // Group by rider and calculate metrics
-    const riderMap = new Map()
-    
+
+    // Create a map of performance data by rider_id
+    const performanceMap = new Map()
     filtered.forEach(record => {
-      const riderId = record.rider_id || record.driver_name || record.operator_id
+      const riderId = record.rider_id
       if (!riderId) return
-      
-      if (!riderMap.has(riderId)) {
-        riderMap.set(riderId, {
-          riderId: riderId,
-          riderName: record.driver_name || record.rider_name || riderId,
-          hub: record.operator_hub || 'Unknown',
+
+      if (!performanceMap.has(riderId)) {
+        performanceMap.set(riderId, {
           delivered: 0,
           onHold: 0,
           assigned: 0,
-          successRate: 0,
-          productivity: 0,
           recordCount: 0
         })
       }
+
+      const metrics = performanceMap.get(riderId)
+      metrics.delivered += parseInt(record.delivered) || 0
+      metrics.onHold += parseInt(record.onhold) || 0
+      metrics.assigned += parseInt(record.assigned) || 0
+      metrics.recordCount++
+    })
+
+    // Create delivery trend data (daily delivered counts for last 7 days with data)
+    const trendData = new Map()
+    performanceRecords.forEach(record => {
+      const riderId = record.rider_id
+      if (!riderId) return
+
+      if (!trendData.has(riderId)) {
+        trendData.set(riderId, {})
+      }
+      const riderTrend = trendData.get(riderId)
+      const date = record.date?.split('T')[0] || record.date
+      riderTrend[date] = (riderTrend[date] || 0) + (parseInt(record.delivered) || 0)
+    })
+
+    // Build rider list from ridersData (Rider page), enriched with performance metrics
+    let riders = ridersData.map(rider => {
+      const riderId = rider.rider_id
+      const metrics = performanceMap.get(riderId) || {
+        delivered: 0,
+        onHold: 0,
+        assigned: 0,
+        recordCount: 0
+      }
+
+      // Get trend data (last 7 dates with data, sorted)
+      const trend = trendData.get(riderId) || {}
+      const trendEntries = Object.entries(trend)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .slice(-7)
+        .map(([date, delivered]) => ({ date, delivered }))
+
+      // Calculate success rate (percentage) and productivity (average assigned per day)
+      const successRate = metrics.assigned > 0 ? (metrics.delivered / metrics.assigned) * 100 : 0
+      const productivity = metrics.recordCount > 0 ? Math.round(metrics.assigned / metrics.recordCount) : 0
+
+      return {
+        riderId: riderId,
+        riderName: rider.rider_name,
+        hub: rider.operator_hub || 'Unknown',
+        delivered: metrics.delivered,
+        onHold: metrics.onHold,
+        assigned: metrics.assigned,
+        successRate,
+        productivity,
+        trend: trendEntries
+      }
+    })
+
+    // Filter by selected rider
+    riders = riders.filter(r => String(r.riderId) === String(selectedRider))
+
+    // Sort by delivered descending
+    return riders.sort((a, b) => b.delivered - a.delivered)
+  }, [ridersData, performanceRecords, selectedRider, selectedDate])
+
+  // Calculate Rider Level chart data for Delivery Trend
+  const riderLevelChartData = useMemo(() => {
+    // If no rider is selected, return empty array (no data shown)
+    if (!selectedRider) {
+      return []
+    }
+    
+    // Aggregate counts by date across all riders (or filtered riders)
+    const dateMap = new Map()
+    
+    let filtered = performanceRecords
+    
+    // Filter by selected rider
+    filtered = filtered.filter(p => p.rider_id === selectedRider)
+    
+    // Get unique dates from filtered records and sort them
+    const uniqueDates = [...new Set(filtered.map(r => r.date?.split('T')[0] || r.date).filter(Boolean))].sort()
+    
+    // Limit date range based on view (last N dates with data)
+    let dateLimit = riderTrendView === 'L7D' ? 7 : 30
+    const recentDates = uniqueDates.slice(-dateLimit)
+    const dateSet = new Set(recentDates)
+    
+    filtered.forEach(record => {
+      const date = record.date?.split('T')[0] || record.date
+      if (!date) return
       
-      const rider = riderMap.get(riderId)
-      rider.delivered += parseInt(record.delivered) || 0
-      rider.onHold += parseInt(record.onhold) || 0
-      rider.assigned += parseInt(record.assigned) || 0
-      rider.successRate += parseFloat(record.pecentage) || parseFloat(record.percentage) || 0
-      rider.productivity += parseFloat(record.productivity) || 0
-      rider.recordCount++
+      // Skip if not in recent dates set
+      if (!dateSet.has(date)) return
+      
+      // Aggregate based on selected metric
+      let value = 0
+      const delivered = parseInt(record.delivered) || 0
+      const onHold = parseInt(record.onhold) || 0
+      const assigned = parseInt(record.assigned) || 0
+      
+      switch (riderTrendMetric) {
+        case 'delivered':
+          value = delivered
+          break
+        case 'onHold':
+          value = onHold
+          break
+        case 'successRate':
+          value = assigned > 0 ? (delivered / assigned) * 100 : 0
+          break
+        case 'productivity':
+          value = assigned
+          break
+        default:
+          value = delivered
+      }
+      
+      const current = dateMap.get(date) || 0
+      dateMap.set(date, current + value)
     })
     
-    // Calculate averages and format
-    return Array.from(riderMap.values()).map(rider => ({
-      ...rider,
-      successRate: rider.recordCount > 0 ? Math.round(rider.successRate / rider.recordCount) : 0,
-      productivity: rider.recordCount > 0 ? Math.round(rider.productivity / rider.recordCount) : 0
-    })).sort((a, b) => b.delivered - a.delivered) // Sort by delivered descending
-  }, [performanceRecords, selectedHub, selectedDate])
+    // Convert to array and sort by date
+    const result = Array.from(dateMap.entries())
+      .map(([date, value]) => ({ 
+        date, 
+        value: value 
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+    
+    return result
+  }, [performanceRecords, selectedRider, riderTrendView, riderTrendMetric])
 
   const COLORS = ['#a83030', '#c94c4c', '#e07e7e', '#f0b1b1', '#742a2a']
 
@@ -1107,9 +1253,14 @@ function Dashboard() {
             <input 
               type="text"
               placeholder="Search hub..."
-              value={hubSearchTerm || selectedHub}
+              value={hubSearchTerm}
               onChange={(e) => {
-                setHubSearchTerm(e.target.value)
+                const value = e.target.value
+                setHubSearchTerm(value)
+                // Clear selected hub when input is cleared
+                if (value === '') {
+                  setSelectedHub('')
+                }
                 setShowHubDropdown(true)
               }}
               onFocus={() => setShowHubDropdown(true)}
@@ -1123,7 +1274,7 @@ function Dashboard() {
                       key={hub}
                       onClick={() => {
                         setSelectedHub(hub)
-                        setHubSearchTerm('')
+                        setHubSearchTerm(hub)
                         setShowHubDropdown(false)
                       }}
                       className="px-2 py-1 text-xs text-white hover:bg-slate-600/50 cursor-pointer"
@@ -1159,7 +1310,7 @@ function Dashboard() {
       </div>
       )}
 
-      {/* Filters Bar for Rider Level View - Hub and Date Filters */}
+      {/* Filters Bar for Rider Level View - Rider Filter Only */}
       {dashboardView === 'rider' && (
       <div className="relative bg-slate-800/80 backdrop-blur-md rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/80 transition-all duration-300 shadow-[0_0_30px_rgba(0,0,0,0.3)] z-50">
         <div className="flex items-center gap-3 flex-wrap">
@@ -1167,48 +1318,46 @@ function Dashboard() {
             <Filter className="w-3.5 h-3.5" />
             <span className="text-xs font-medium tracking-wide uppercase">Filters</span>
           </div>
-          
-          <div className="relative hub-search-container">
-            <input 
+
+          <div className="relative rider-search-container">
+            <input
               type="text"
-              placeholder="Search hub..."
-              value={hubSearchTerm || selectedHub}
+              placeholder="Search rider..."
+              value={riderSearchTerm}
               onChange={(e) => {
-                setHubSearchTerm(e.target.value)
-                setShowHubDropdown(true)
+                const value = e.target.value
+                setRiderSearchTerm(value)
+                // Clear selected rider when input is cleared
+                if (value === '') {
+                  setSelectedRider('')
+                }
+                setShowRiderDropdown(true)
               }}
-              onFocus={() => setShowHubDropdown(true)}
+              onFocus={() => setShowRiderDropdown(true)}
               className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm w-64"
             />
-            {showHubDropdown && (
+            {showRiderDropdown && (
               <div className="absolute top-full left-0 mt-1 bg-slate-700/95 border border-slate-600/50 rounded shadow-lg z-[99999] max-h-40 overflow-y-auto w-64">
-                {filteredHubs.length > 0 ? (
-                  filteredHubs.map(hub => (
+                {filteredRiders.length > 0 ? (
+                  filteredRiders.map(rider => (
                     <div
-                      key={hub}
+                      key={rider.id}
                       onClick={() => {
-                        setSelectedHub(hub)
-                        setHubSearchTerm('')
-                        setShowHubDropdown(false)
+                        setSelectedRider(rider.id)
+                        setRiderSearchTerm(rider.name)
+                        setShowRiderDropdown(false)
                       }}
                       className="px-2 py-1 text-xs text-white hover:bg-slate-600/50 cursor-pointer"
                     >
-                      {hub}
+                      {rider.name} ({rider.id})
                     </div>
                   ))
                 ) : (
-                  <div className="px-2 py-1 text-xs text-slate-400">No hubs found</div>
+                  <div className="px-2 py-1 text-xs text-slate-400">No riders found</div>
                 )}
               </div>
             )}
           </div>
-          
-          <input 
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
-          />
           
           {/* Refresh Button */}
           <button
@@ -1336,7 +1485,7 @@ function Dashboard() {
           </div>
           <ResponsiveContainer width="100%" height={320}>
             {filteredChartData.length > 0 ? (
-            <AreaChart data={filteredChartData} layout="horizontal">
+            <AreaChart data={normalizedChartData} layout="horizontal">
               <defs>
                 <linearGradient id="colorDeliveries" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#a83030" stopOpacity={0.3}/>
@@ -1375,11 +1524,14 @@ function Dashboard() {
               />
               <Area 
                 type="monotone" 
-                dataKey={selectedCategory} 
+                dataKey="value" 
                 stroke="#a83030" 
                 strokeWidth={2}
                 fillOpacity={1} 
-                fill="url(#colorDeliveries)" 
+                fill="url(#colorDeliveries)"
+                animationDuration={800}
+                animationEasing="ease-in-out"
+                isAnimationActive={true}
               />
             </AreaChart>
             ) : (
@@ -1591,80 +1743,191 @@ function Dashboard() {
         {/* Stats Summary */}
         <div className="flex gap-2">
           <CompactStatCard 
-            title="Total Riders" 
-            value={riderLevelData.length} 
-            icon={Users}
+            title="Avg Success Rate" 
+            value={`${riderLevelData.length > 0 
+              ? (riderLevelData.reduce((sum, r) => sum + (r.successRate || 0), 0) / riderLevelData.length).toFixed(1)
+              : 0}%`} 
+            icon={TrendingUp}
           />
           <CompactStatCard 
-            title="Total Delivered" 
+            title="Delivered" 
             value={riderLevelData.reduce((sum, r) => sum + r.delivered, 0)} 
             icon={Package}
           />
           <CompactStatCard 
-            title="Avg Success Rate" 
-            value={`${riderLevelData.length > 0 ? Math.round(riderLevelData.reduce((sum, r) => sum + r.successRate, 0) / riderLevelData.length) : 0}%`} 
+            title="On-Hold" 
+            value={riderLevelData.reduce((sum, r) => sum + r.onHold, 0)} 
+            icon={Package}
+          />
+          <CompactStatCard 
+            title="Avg Productivity" 
+            value={riderLevelData.length > 0 
+              ? (riderLevelData.reduce((sum, r) => sum + (r.productivity || 0), 0) / riderLevelData.length).toFixed(1) + '%'
+              : '0.0%'} 
             icon={TrendingUp}
           />
         </div>
-        
-        {/* Riders Table */}
-        <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+
+        {/* Delivery Trend Chart - Only show Riders Information when a rider is selected */}
+        <div className="bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-              <Users className="w-4 h-4 text-maroon-500" />
-              Rider Performance
+              <TrendingUp className="w-4 h-4 text-maroon-500" />
+              Delivery Trend
             </h3>
-            <span className="text-xs text-slate-400">{riderLevelData.length} riders found</span>
+            <div className="flex items-center gap-2">
+              {/* Metric Filter */}
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setRiderTrendMetric('successRate')}
+                  className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+                    riderTrendMetric === 'successRate'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                  }`}
+                >
+                  Success Rate
+                </button>
+                <button
+                  onClick={() => setRiderTrendMetric('delivered')}
+                  className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+                    riderTrendMetric === 'delivered'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                  }`}
+                >
+                  Delivered
+                </button>
+                <button
+                  onClick={() => setRiderTrendMetric('onHold')}
+                  className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+                    riderTrendMetric === 'onHold'
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                  }`}
+                >
+                  On-Hold
+                </button>
+                <button
+                  onClick={() => setRiderTrendMetric('productivity')}
+                  className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+                    riderTrendMetric === 'productivity'
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                  }`}
+                >
+                  Productivity
+                </button>
+              </div>
+              <div className="w-px h-4 bg-slate-600 mx-1"></div>
+              {/* Time Range Filter */}
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setRiderTrendView('MTD')}
+                  className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
+                    riderTrendView === 'MTD'
+                      ? 'bg-maroon-500 text-white'
+                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                  }`}
+                >
+                  MTD
+                </button>
+                <button
+                  onClick={() => setRiderTrendView('L7D')}
+                  className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
+                    riderTrendView === 'L7D'
+                      ? 'bg-maroon-500 text-white'
+                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                  }`}
+                >
+                  L7D
+                </button>
+              </div>
+            </div>
           </div>
           
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-slate-700">
-                  <th className="text-left px-3 py-2 text-[10px] font-medium text-slate-400 uppercase tracking-wider">Rider ID</th>
-                  <th className="text-left px-3 py-2 text-[10px] font-medium text-slate-400 uppercase tracking-wider">Rider Name</th>
-                  <th className="text-left px-3 py-2 text-[10px] font-medium text-slate-400 uppercase tracking-wider">Hub</th>
-                  <th className="text-right px-3 py-2 text-[10px] font-medium text-slate-400 uppercase tracking-wider">Delivered</th>
-                  <th className="text-right px-3 py-2 text-[10px] font-medium text-slate-400 uppercase tracking-wider">On-Hold</th>
-                  <th className="text-right px-3 py-2 text-[10px] font-medium text-slate-400 uppercase tracking-wider">Success Rate</th>
-                  <th className="text-right px-3 py-2 text-[10px] font-medium text-slate-400 uppercase tracking-wider">Productivity</th>
-                </tr>
-              </thead>
-              <tbody className="text-xs">
-                {riderLevelData.length > 0 ? (
-                  riderLevelData.slice(0, 50).map((rider, index) => (
-                    <tr key={rider.riderId} className={`border-b border-slate-700/50 hover:bg-slate-700/30 transition ${index % 2 === 0 ? 'bg-slate-800/20' : ''}`}>
-                      <td className="px-3 py-2 text-slate-300">{rider.riderId}</td>
-                      <td className="px-3 py-2 text-white font-medium">{rider.riderName}</td>
-                      <td className="px-3 py-2 text-slate-400">{rider.hub}</td>
-                      <td className="px-3 py-2 text-right text-emerald-400">{rider.delivered}</td>
-                      <td className="px-3 py-2 text-right text-amber-400">{rider.onHold}</td>
-                      <td className="px-3 py-2 text-right">
-                        <span className={`${rider.successRate >= 90 ? 'text-emerald-400' : rider.successRate >= 70 ? 'text-amber-400' : 'text-red-400'}`}>
-                          {rider.successRate}%
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-right text-slate-300">{rider.productivity}</td>
+          {/* Riders Information - Only shown when a rider is selected */}
+          {selectedRider && riderLevelData.length > 0 && (
+            <div className="mb-4 p-3 bg-slate-700/50 rounded-lg border border-slate-600">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                  <Users className="w-3 h-3 text-maroon-500" />
+                  Riders Information
+                </h4>
+                <span className="text-[10px] text-slate-400">{riderLevelData.length} rider(s)</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-slate-600">
+                      <th className="text-left py-1 px-2 text-[10px] font-medium text-slate-400 uppercase">Rider ID</th>
+                      <th className="text-left py-1 px-2 text-[10px] font-medium text-slate-400 uppercase">Name</th>
+                      <th className="text-left py-1 px-2 text-[10px] font-medium text-slate-400 uppercase">Hub</th>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="7" className="px-3 py-8 text-center text-slate-400 text-xs">
-                      {selectedHub || selectedDate 
-                        ? 'No riders found for the selected filters' 
-                        : 'Please select a Hub and Date to view rider data'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          
-          {riderLevelData.length > 50 && (
-            <p className="text-slate-500 text-[10px] mt-2 text-right">
-              Showing top 50 of {riderLevelData.length} riders
-            </p>
+                  </thead>
+                  <tbody className="text-xs">
+                    {riderLevelData.slice(0, 10).map((rider, index) => (
+                      <tr key={rider.riderId} className={`border-b border-slate-700/30 ${index % 2 === 0 ? 'bg-slate-800/20' : ''}`}>
+                        <td className="py-1 px-2 text-slate-300">{rider.riderId}</td>
+                        <td className="py-1 px-2 text-white font-medium">{rider.riderName}</td>
+                        <td className="py-1 px-2 text-slate-400">{rider.hub}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
+          
+          <div className="h-48">
+            {riderLevelChartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={riderLevelChartData}>
+                  <defs>
+                    <linearGradient id="riderDeliveredGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'} stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'} stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis 
+                    dataKey="date" 
+                    stroke="#64748b"
+                    fontSize={10}
+                    tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  />
+                  <YAxis stroke="#64748b" fontSize={10} />
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: '#1e293b', 
+                      border: '1px solid #475569',
+                      borderRadius: '6px',
+                      fontSize: '12px'
+                    }}
+                    labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                    formatter={(value) => {
+                      if (riderTrendMetric === 'successRate') {
+                        return [`${value.toFixed(1)}%`, 'Success Rate']
+                      }
+                      return [value, riderTrendMetric]
+                    }}
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="value"
+                    stroke={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'}
+                    strokeWidth={2}
+                    fillOpacity={1} 
+                    fill="url(#riderDeliveredGradient)" 
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+                No chart data available
+              </div>
+            )}
+          </div>
         </div>
       </div>
       )}
@@ -1682,7 +1945,7 @@ function Dashboard() {
           {/* Avg KPI Chart */}
           <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-white">AVG KPI (P7D vs L7D)</h3>
+              <h3 className="text-sm font-semibold text-white">AVG KPI</h3>
               <div className="flex items-center gap-3 text-xs">
                 <div className="flex items-center gap-1">
                   <div className="w-3 h-3 bg-blue-500 rounded"></div>
@@ -1712,6 +1975,7 @@ function Dashboard() {
                   tickFormatter={(value) => `${value}%`}
                 />
                 <Tooltip 
+                  cursor={false}
                   contentStyle={{ 
                     backgroundColor: '#1e293b', 
                     border: '1px solid #334155', 
@@ -1734,7 +1998,7 @@ function Dashboard() {
           {/* Clear Floor Rate Chart */}
           <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-white">CLEAR FLOOR RATE (P7D vs L7D)</h3>
+              <h3 className="text-sm font-semibold text-white">CLEAR FLOOR RATE</h3>
               <div className="flex items-center gap-3 text-xs">
                 <div className="flex items-center gap-1">
                   <div className="w-3 h-3 bg-blue-500 rounded"></div>
@@ -1764,6 +2028,7 @@ function Dashboard() {
                   tickFormatter={(value) => `${value}%`}
                 />
                 <Tooltip 
+                  cursor={false}
                   contentStyle={{ 
                     backgroundColor: '#1e293b', 
                     border: '1px solid #334155', 
@@ -1786,7 +2051,7 @@ function Dashboard() {
           {/* Success Rate Chart */}
           <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-white">SUCCESS RATE (P7D vs L7D)</h3>
+              <h3 className="text-sm font-semibold text-white">SUCCESS RATE</h3>
               <div className="flex items-center gap-3 text-xs">
                 <div className="flex items-center gap-1">
                   <div className="w-3 h-3 bg-blue-500 rounded"></div>
@@ -1816,6 +2081,7 @@ function Dashboard() {
                   tickFormatter={(value) => `${value}%`}
                 />
                 <Tooltip 
+                  cursor={false}
                   contentStyle={{ 
                     backgroundColor: '#1e293b', 
                     border: '1px solid #334155', 
@@ -1838,7 +2104,7 @@ function Dashboard() {
           {/* Productivity Chart */}
           <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-white">PRODUCTIVITY (P7D vs L7D)</h3>
+              <h3 className="text-sm font-semibold text-white">PRODUCTIVITY</h3>
               <div className="flex items-center gap-3 text-xs">
                 <div className="flex items-center gap-1">
                   <div className="w-3 h-3 bg-blue-500 rounded"></div>
@@ -1868,6 +2134,7 @@ function Dashboard() {
                   tickFormatter={(value) => `${value}%`}
                 />
                 <Tooltip 
+                  cursor={false}
                   contentStyle={{ 
                     backgroundColor: '#1e293b', 
                     border: '1px solid #334155', 
@@ -1882,6 +2149,106 @@ function Dashboard() {
                 </Bar>
                 <Bar dataKey="prodL7D" fill="#ef4444" name="L7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="prodL7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Loss Chart */}
+        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-sm font-medium text-slate-300">Loss </h4>
+            <div className="flex gap-3 text-xs">
+              <span className="flex items-center gap-1 text-blue-400">
+                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                P7D
+              </span>
+              <span className="flex items-center gap-1 text-red-400">
+                <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                L7D
+              </span>
+            </div>
+          </div>
+          <div className="h-[250px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={getComparisonData()} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis 
+                  dataKey="hub" 
+                  stroke="#64748b" 
+                  fontSize={10}
+                  tickLine={false}
+                />
+                <YAxis 
+                  stroke="#64748b" 
+                  fontSize={10}
+                  tickLine={false}
+                />
+                <Tooltip 
+                  cursor={false}
+                  contentStyle={{ 
+                    backgroundColor: '#1e293b', 
+                    border: '1px solid #475569',
+                    borderRadius: '6px',
+                    fontSize: '12px'
+                  }}
+                />
+                <Bar dataKey="lossP7D" fill="#3b82f6" name="P7D" radius={[4, 4, 0, 0]}>
+                  <LabelList dataKey="lossP7D" position="top" fill="#fff" fontSize={10} />
+                </Bar>
+                <Bar dataKey="lossL7D" fill="#ef4444" name="L7D" radius={[4, 4, 0, 0]}>
+                  <LabelList dataKey="lossL7D" position="top" fill="#fff" fontSize={10} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Rider Count Chart */}
+        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-sm font-medium text-slate-300">Rider Count </h4>
+            <div className="flex gap-3 text-xs">
+              <span className="flex items-center gap-1 text-blue-400">
+                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                P7D
+              </span>
+              <span className="flex items-center gap-1 text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                L7D
+              </span>
+            </div>
+          </div>
+          <div className="h-[250px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={getComparisonData()} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis 
+                  dataKey="hub" 
+                  stroke="#64748b" 
+                  fontSize={10}
+                  tickLine={false}
+                />
+                <YAxis 
+                  stroke="#64748b" 
+                  fontSize={10}
+                  tickLine={false}
+                />
+                <Tooltip 
+                  cursor={false}
+                  contentStyle={{ 
+                    backgroundColor: '#1e293b', 
+                    border: '1px solid #475569',
+                    borderRadius: '6px',
+                    fontSize: '12px'
+                  }}
+                />
+                <Bar dataKey="ridersP7D" fill="#3b82f6" name="P7D" radius={[4, 4, 0, 0]}>
+                  <LabelList dataKey="ridersP7D" position="top" fill="#fff" fontSize={10} />
+                </Bar>
+                <Bar dataKey="ridersL7D" fill="#10b981" name="L7D" radius={[4, 4, 0, 0]}>
+                  <LabelList dataKey="ridersL7D" position="top" fill="#fff" fontSize={10} />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>

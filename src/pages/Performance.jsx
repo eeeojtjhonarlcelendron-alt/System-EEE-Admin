@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, FileDown, Plus, Pencil, Trash2, Calendar, Building2, MapPin } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { getPerformanceRecords, getPerformanceRecordsPaginated, batchInsertPerformanceRecords, deleteAllPerformanceRecords, updatePerformanceRecord, getPerformanceRecordByRiderAndDate, getPerformanceRecordsByDateRange, refreshRiders, deletePerformanceRecord, insertSinglePerformanceRecord } from '../lib/data'
+import { getPerformanceRecords, getPerformanceRecordsPaginated, batchInsertPerformanceRecords, deleteAllPerformanceRecords, updatePerformanceRecord, getPerformanceRecordByRiderAndDate, getPerformanceRecordsByDateRange, refreshRiders, deletePerformanceRecord, insertSinglePerformanceRecord, getRiders } from '../lib/data'
 
 function parseDate(dateValue) {
   if (!dateValue) return null
@@ -92,42 +92,60 @@ function Performance() {
   })
 
   // Initial data load on mount
+  // Fetch all rider data on mount for client-side pagination
   useEffect(() => {
-    async function fetchInitialData() {
-      setLoading(true)
-      const { data: records, error, totalCount: count } = await getPerformanceRecordsPaginated(0, itemsPerPage, {})
-      if (!error && records) {
-        setData(records)
-        setFilteredData(records)
-        setTotalCount(count)
-      }
-      setLoading(false)
-    }
-    fetchInitialData()
-  }, [])
-
-  useEffect(() => {
-    // Only fetch data when Apply button is clicked (appliedFilters is set)
-    if (!appliedFilters) return
-    
     async function fetchData() {
       setLoading(true)
-      const { data: records, error, totalCount: count } = await getPerformanceRecordsPaginated(currentPage - 1, itemsPerPage, {
-        hub: appliedFilters.operatorHub,
-        region: appliedFilters.region,
-        dateFrom: appliedFilters.dateFrom,
-        dateTo: appliedFilters.dateTo,
-        search: searchTerm
+      console.log('Fetching all riders and performance data...')
+      
+      // Fetch all riders from Rider table
+      const { data: riders, error: ridersError } = await getRiders()
+      // Fetch all performance records
+      const { data: records, error: recordsError } = await getPerformanceRecords()
+      
+      console.log('Fetch result:', { 
+        ridersCount: riders?.length, 
+        recordsCount: records?.length,
+        ridersError, 
+        recordsError 
       })
-      if (!error && records) {
-        setData(records)
-        setFilteredData(records)
-        setTotalCount(count)
+      
+      if (!ridersError && riders) {
+        console.log('Setting data with', riders.length, 'riders')
+        // Create a map of performance data by rider_id
+        const performanceMap = new Map()
+        if (records) {
+          records.forEach(record => {
+            const riderId = record.rider_id
+            if (!performanceMap.has(riderId)) {
+              performanceMap.set(riderId, [])
+            }
+            performanceMap.get(riderId).push(record)
+          })
+        }
+        
+        // Merge rider data with performance data
+        const mergedData = riders.map(rider => {
+          const riderRecords = performanceMap.get(rider.rider_id) || []
+          const latestRecord = riderRecords[0] || {}
+          return {
+            ...latestRecord,
+            ...rider,
+            rider_name: rider.rider_name,
+            operator_hub: rider.operator_hub,
+            region: rider.region
+          }
+        })
+        
+        setData(mergedData)
+        setFilteredData(mergedData)
+        setTotalCount(mergedData.length)
+        setCurrentPage(1)
       }
       setLoading(false)
     }
     fetchData()
-  }, [currentPage, appliedFilters])
+  }, [])
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
@@ -139,10 +157,39 @@ function Performance() {
   }
 
   const applyFilters = useCallback(() => {
-    // Set applied filters to trigger data load
-    setAppliedFilters({ ...filters })
+    // Apply client-side filters to the full dataset
+    if (!data.length) return
+    
+    let result = [...data]
+    
+    if (filters.operatorHub) {
+      result = result.filter(r => r.operator_hub === filters.operatorHub)
+    }
+    
+    if (filters.region) {
+      result = result.filter(r => r.region === filters.region)
+    }
+    
+    if (filters.dateFrom) {
+      result = result.filter(r => r.date >= filters.dateFrom)
+    }
+    
+    if (filters.dateTo) {
+      result = result.filter(r => r.date <= filters.dateTo)
+    }
+    
+    if (filters.rider) {
+      const searchLower = filters.rider.toLowerCase()
+      result = result.filter(r => 
+        (r.rider_id?.toLowerCase() || '').includes(searchLower) ||
+        (r.driver_name?.toLowerCase() || '').includes(searchLower)
+      )
+    }
+    
+    setFilteredData(result)
+    setTotalCount(result.length)
     setCurrentPage(1)
-  }, [filters])
+  }, [data, filters])
 
   const clearFilters = () => {
     setFilters({ dateFrom: '', dateTo: '', region: '', operatorHub: '', rider: '' })
@@ -201,7 +248,7 @@ function Performance() {
             assigned: parseInt(rowData['Assigned']) || 0,
             delivered: parseInt(rowData['Delivered']) || 0,
             onhold: parseInt(rowData['Onhold']) || 0,
-            pecentage: parseFloat(String(rowData['Pecentage']).replace('%', '')) || 0,
+            pecentage: (parseFloat(String(rowData['Pecentage']).replace('%', '')) || 0) / 100,
             failed_rate: parseFloat(String(rowData['Failed Rate']).replace('%', '')) || 0,
             region: rowData['Region'] || '',
           }
@@ -486,8 +533,9 @@ function Performance() {
     }
   }
 
-  // Server-side pagination - use data directly from API
-  const paginatedData = data
+  // Client-side pagination - slice filteredData based on current page
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const paginatedData = filteredData.slice(startIndex, startIndex + itemsPerPage)
   const totalPages = Math.ceil(totalCount / itemsPerPage)
   
   // Unique values for filters - fetch from API or use limited set
@@ -502,8 +550,22 @@ function Performance() {
   )
 
   const handlePageChange = (page) => {
+    console.log('Performance page changed to:', page)
     setCurrentPage(page)
   }
+  
+  // Debug pagination
+  useEffect(() => {
+    console.log('Performance pagination debug:', {
+      currentPage,
+      totalPages,
+      itemsPerPage,
+      filteredDataLength: filteredData.length,
+      paginatedDataLength: paginatedData.length,
+      firstItem: paginatedData[0]?.rider_id || paginatedData[0]?.id,
+      lastItem: paginatedData[paginatedData.length - 1]?.rider_id || paginatedData[paginatedData.length - 1]?.id
+    })
+  }, [currentPage, paginatedData, totalPages, filteredData.length])
 
   // Export data to CSV
   const exportData = () => {
@@ -549,14 +611,14 @@ function Performance() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition font-medium text-xs"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 font-medium text-xs shadow-sm hover:shadow-md hover:scale-105"
           >
             <Upload className="w-3.5 h-3.5" />
             Upload
           </button>
           <button
             onClick={exportData}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-medium text-xs"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 font-medium text-xs hover:shadow-md"
           >
             <Download className="w-3.5 h-3.5" />
             Export
@@ -591,7 +653,7 @@ function Performance() {
               type="date"
               value={filters.dateFrom}
               onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             />
           </div>
           <div>
@@ -603,7 +665,7 @@ function Performance() {
               type="date"
               value={filters.dateTo}
               onChange={(e) => handleFilterChange('dateTo', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             />
           </div>
           <div>
@@ -614,7 +676,7 @@ function Performance() {
             <select
               value={filters.operatorHub}
               onChange={(e) => handleFilterChange('operatorHub', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             >
               <option value="" className="bg-slate-700">All Hubs</option>
               {uniqueHubs.map(hub => (
@@ -630,7 +692,7 @@ function Performance() {
             <select
               value={filters.region}
               onChange={(e) => handleFilterChange('region', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white"
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             >
               <option value="" className="bg-slate-700">All Regions</option>
               {uniqueRegions.map(region => (
@@ -642,14 +704,14 @@ function Performance() {
         <div className="mt-2.5 flex justify-end gap-2">
           <button
             onClick={applyFilters}
-            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition shadow-sm"
+            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 shadow-sm hover:shadow-md hover:scale-105"
           >
             <Search className="w-3 h-3" />
             Apply
           </button>
           <button
             onClick={clearFilters}
-            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition border border-slate-600"
+            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 border border-slate-600 hover:border-slate-500"
             title="Clear filters"
           >
             <X className="w-3 h-3" />
@@ -678,20 +740,20 @@ function Performance() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
-              {paginatedData.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-700/50 transition-colors">
+              {paginatedData.map((row, index) => (
+                <tr key={row.id || index} className="hover:bg-slate-700/50 transition-all duration-200 group">
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <div className="flex items-center gap-0.5">
                       <button
                         onClick={() => handleEdit(row)}
-                        className="p-1 text-maroon-400 hover:bg-maroon-900/30 rounded transition-all"
+                        className="p-1 text-maroon-400 hover:bg-maroon-500/20 rounded transition-all duration-200 hover:scale-110"
                         title="Edit"
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleDelete(row.id)}
-                        className="p-1 text-red-400 hover:bg-red-900/30 rounded transition-all"
+                        className="p-1 text-red-400 hover:bg-red-500/20 rounded transition-all duration-200 hover:scale-110"
                         title="Delete"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -730,7 +792,7 @@ function Performance() {
             <button
               onClick={() => handlePageChange(currentPage - 1)}
               disabled={currentPage === 1}
-              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-md hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-lg hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-sm"
             >
               Previous
             </button>
@@ -758,7 +820,7 @@ function Performance() {
             <button
               onClick={() => handlePageChange(currentPage + 1)}
               disabled={currentPage === totalPages}
-              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-md hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-lg hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-sm"
             >
               Next
             </button>

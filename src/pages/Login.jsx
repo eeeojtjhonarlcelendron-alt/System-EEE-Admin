@@ -23,14 +23,14 @@ function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-600 to-primary-900 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-elevated w-full max-w-md p-8 border border-white/20">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Lock className="w-8 h-8 text-primary-600" />
+          <div className="w-16 h-16 bg-gradient-to-br from-maroon-500 to-maroon-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-maroon-500/30">
+            <Lock className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-800">Admin Login</h1>
-          <p className="text-gray-500 mt-2">Sign in to access the dashboard</p>
+          <h1 className="text-2xl font-bold text-gray-800 tracking-tight">Admin Login</h1>
+          <p className="text-gray-500 mt-2 text-sm">Sign in to access the dashboard</p>
         </div>
 
         <form onSubmit={handleSubmit}>
@@ -45,7 +45,7 @@ function Login() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition"
+                  className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-maroon-500 focus:border-transparent focus:bg-white outline-none transition-all duration-200 hover:border-gray-300"
                   placeholder="Enter email"
                   required
                 />
@@ -62,14 +62,14 @@ function Login() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition"
+                  className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-maroon-500 focus:border-transparent focus:bg-white outline-none transition-all duration-200 hover:border-gray-300"
                   placeholder="Enter password"
                 />
               </div>
             </div>
 
             {error && (
-              <div className="bg-red-50 text-red-600 px-4 py-3 rounded-lg text-sm">
+              <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm border border-red-100">
                 {error}
               </div>
             )}
@@ -77,7 +77,7 @@ function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-primary-600 hover:bg-primary-700 text-white font-semibold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-gradient-to-r from-maroon-600 to-maroon-700 hover:from-maroon-700 hover:to-maroon-800 text-white font-semibold py-3 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-maroon-600/25 hover:shadow-xl hover:shadow-maroon-600/30 hover:-translate-y-0.5"
             >
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
