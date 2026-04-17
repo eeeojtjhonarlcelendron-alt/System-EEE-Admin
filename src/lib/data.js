@@ -312,6 +312,49 @@ export async function refreshRiders() {
   return { error }
 }
 
+// Sync unique riders from performance_records to riders table
+export async function syncRidersFromPerformance() {
+  // Get all performance records
+  const { data: records, error: fetchError } = await supabase
+    .from('performance_records')
+    .select('rider_id, driver_name, hub, region')
+  
+  if (fetchError || !records) {
+    return { error: fetchError }
+  }
+  
+  // Get unique riders
+  const uniqueRiders = [...new Map(records.map(r => [r.rider_id, {
+    rider_id: r.rider_id,
+    rider_name: r.driver_name,
+    operator_hub: r.hub,
+    region: r.region,
+    status: 'Active'
+  }])).values()]
+  
+  // Upsert to riders table
+  const { error } = await supabase
+    .from('riders')
+    .upsert(uniqueRiders, { onConflict: 'rider_id' })
+  
+  return { data: uniqueRiders.length, error }
+}
+
+// Get fuel management riders
+export async function getFuelManagementRiders(filters = {}) {
+  let query = supabase.from('fuel_management_riders').select('*')
+  
+  if (filters.status) {
+    query = query.eq('status', filters.status)
+  }
+  if (filters.search) {
+    query = query.or(`rider_id.ilike.%${filters.search}%,rider_name.ilike.%${filters.search}%`)
+  }
+
+  const { data, error } = await query.order('created_at', { ascending: false })
+  return { data: data || [], error }
+}
+
 // Get unique riders with aggregated data (much faster than client-side grouping)
 export async function getUniqueRiders() {
   const { data, error } = await supabase

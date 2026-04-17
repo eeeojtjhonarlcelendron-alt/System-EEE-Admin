@@ -220,9 +220,6 @@ function Layout({ onLogout }) {
             >
               <Menu className="w-6 h-6" />
             </button>
-            {pageTitle !== 'Dashboard' && (
-              <h1 className="text-xl font-bold text-white tracking-tight">{pageTitle}</h1>
-            )}
           </div>
           <div></div>
         </header>

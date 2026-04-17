@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, FileDown, Plus, Pencil, Trash2, Calendar, Building2, MapPin } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { getPerformanceRecords, getPerformanceRecordsPaginated, batchInsertPerformanceRecords, deleteAllPerformanceRecords, updatePerformanceRecord, getPerformanceRecordByRiderAndDate, getPerformanceRecordsByDateRange, refreshRiders, deletePerformanceRecord, insertSinglePerformanceRecord, getRiders } from '../lib/data'
+import { getPerformanceRecords, getPerformanceRecordsPaginated, batchInsertPerformanceRecords, deleteAllPerformanceRecords, updatePerformanceRecord, getPerformanceRecordByRiderAndDate, getPerformanceRecordsByDateRange, refreshRiders, deletePerformanceRecord, insertSinglePerformanceRecord, getRiders, syncRidersFromPerformance } from '../lib/data'
 
 function parseDate(dateValue) {
   if (!dateValue) return null
@@ -91,6 +91,20 @@ function Performance() {
     region: ''
   })
 
+  // Sync riders from existing performance records on mount
+  useEffect(() => {
+    async function syncExistingRiders() {
+      console.log('Syncing riders from existing performance records...')
+      const { data: syncedCount, error } = await syncRidersFromPerformance()
+      if (error) {
+        console.error('Failed to sync existing riders:', error)
+      } else {
+        console.log(`Synced ${syncedCount} riders from existing performance data`)
+      }
+    }
+    syncExistingRiders()
+  }, [])
+
   // Initial data load on mount
   // Fetch all rider data on mount for client-side pagination
   useEffect(() => {
@@ -110,51 +124,50 @@ function Performance() {
         recordsError 
       })
       
-      if (!ridersError && riders) {
-        console.log('Setting data with', riders.length, 'riders')
-        // Create a map of performance data by rider_id
-        const performanceMap = new Map()
-        if (records) {
-          records.forEach(record => {
-            const riderId = record.rider_id
-            if (!performanceMap.has(riderId)) {
-              performanceMap.set(riderId, [])
-            }
-            performanceMap.get(riderId).push(record)
-          })
-        }
-        
-        // Merge rider data with performance data
-        const mergedData = riders.map(rider => {
-          const riderRecords = performanceMap.get(rider.rider_id) || []
-          const latestRecord = riderRecords[0] || {}
-          return {
-            ...latestRecord,
-            ...rider,
-            rider_name: rider.rider_name,
-            operator_hub: rider.operator_hub,
-            region: rider.region
-          }
+      console.log('Setting data with', riders?.length || 0, 'riders,', records?.length || 0, 'records')
+      
+      // Create a map of rider data by rider_id
+      const riderMap = new Map()
+      if (riders) {
+        riders.forEach(rider => {
+          riderMap.set(rider.rider_id, rider)
         })
-        
-        setData(mergedData)
-        setFilteredData(mergedData)
-        setTotalCount(mergedData.length)
-        setCurrentPage(1)
       }
+      
+      // Create merged data from performance records
+      // Include all performance records, even if rider doesn't exist in riders table
+      const mergedData = []
+      if (records) {
+        records.forEach(record => {
+          const rider = riderMap.get(record.rider_id) || {}
+          mergedData.push({
+            ...record,
+            rider_name: rider.rider_name || record.driver_name,
+            operator_hub: rider.operator_hub || record.hub,
+            region: rider.region || record.region
+          })
+        })
+      }
+      
+      setData(mergedData)
+      setFilteredData(mergedData)
+      setTotalCount(mergedData.length)
+      setCurrentPage(1)
       setLoading(false)
     }
     fetchData()
   }, [])
 
+  // Update filters and trigger apply automatically
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
   }
 
-  // Debounced search handler
-  const handleSearchChange = (value) => {
+  // Debounced search handler - connects to rider filter
+  const handleSearchChange = useCallback((value) => {
     setSearchTerm(value)
-  }
+    setFilters(prev => ({ ...prev, rider: value }))
+  }, [])
 
   const applyFilters = useCallback(() => {
     // Apply client-side filters to the full dataset
@@ -182,7 +195,8 @@ function Performance() {
       const searchLower = filters.rider.toLowerCase()
       result = result.filter(r => 
         (r.rider_id?.toLowerCase() || '').includes(searchLower) ||
-        (r.driver_name?.toLowerCase() || '').includes(searchLower)
+        (r.driver_name?.toLowerCase() || '').includes(searchLower) ||
+        (r.rider_name?.toLowerCase() || '').includes(searchLower)
       )
     }
     
@@ -190,6 +204,11 @@ function Performance() {
     setTotalCount(result.length)
     setCurrentPage(1)
   }, [data, filters])
+
+  // Auto-apply filters when they change
+  useEffect(() => {
+    applyFilters()
+  }, [filters, applyFilters])
 
   const clearFilters = () => {
     setFilters({ dateFrom: '', dateTo: '', region: '', operatorHub: '', rider: '' })
@@ -249,7 +268,7 @@ function Performance() {
             delivered: parseInt(rowData['Delivered']) || 0,
             onhold: parseInt(rowData['Onhold']) || 0,
             pecentage: (parseFloat(String(rowData['Pecentage']).replace('%', '')) || 0) / 100,
-            failed_rate: parseFloat(String(rowData['Failed Rate']).replace('%', '')) || 0,
+            failed_rate: 1 - ((parseFloat(String(rowData['Pecentage']).replace('%', '')) || 0) / 100),
             region: rowData['Region'] || '',
           }
         })
@@ -285,57 +304,53 @@ function Performance() {
         console.log(`Inserting ${toInsert.length} records with retry logic`)
         setImportProgress({ current: 0, total: toInsert.length, status: 'Importing...' })
         
-        for (let i = 0; i < toInsert.length; i++) {
-          const record = toInsert[i]
+        // Insert new records in batches of 50 for reliable processing
+        const batchSize = 50
+        for (let i = 0; i < toInsert.length; i += batchSize) {
+          const batch = toInsert.slice(i, i + batchSize)
+          const batchEnd = Math.min(i + batchSize, toInsert.length)
           
-          // Update progress every 10 records
-          if (i % 10 === 0) {
-            setImportProgress({ current: i, total: toInsert.length, status: `Importing... (${i}/${toInsert.length})` })
-          }
+          setImportProgress({ 
+            current: i, 
+            total: toInsert.length, 
+            status: `Inserting batch ${Math.floor(i / batchSize) + 1} (${i + 1}-${batchEnd} of ${toInsert.length})...` 
+          })
           
-          // Try insert with up to 3 retries
-          let retries = 0
-          let success = false
+          const { data: inserted, error: insertError } = await batchInsertPerformanceRecords(batch)
           
-          while (retries < 3 && !success) {
-            const { data: inserted, error: insertError } = await insertSinglePerformanceRecord(record)
-            
-            if (insertError) {
-              if (insertError.code === '57014' && retries < 2) {
-                // Timeout - wait longer and retry
-                console.log(`Timeout on record ${i}, retry ${retries + 1}...`)
-                await new Promise(resolve => setTimeout(resolve, 500))
-                retries++
-              } else {
-                console.error(`Record ${i} failed after ${retries + 1} attempts:`, insertError)
-                failedRecords.push({ index: i, record, error: insertError })
-                break
-              }
-            } else if (inserted) {
-              insertedCount++
-              success = true
-              // Only update UI every 50 records to avoid lag
-              if (insertedCount % 50 === 0) {
-                setData(prev => [inserted, ...prev])
-                setFilteredData(prev => [inserted, ...prev])
+          if (insertError) {
+            console.error('Batch insert error:', insertError)
+            // Fall back to individual inserts for this batch
+            for (const record of batch) {
+              const { data: singleInserted, error: singleError } = await insertSinglePerformanceRecord(record)
+              if (singleError) {
+                let errorMessage = singleError.message || 'Unknown error'
+                if (errorMessage.includes('duplicate key value')) {
+                  errorMessage = 'Duplicate key error - record already exists'
+                }
+                failedRecords.push({ ...record, error: errorMessage })
+              } else if (singleInserted) {
+                insertedCount++
               }
             }
-          }
-          
-          // Delay every 20 records to avoid overwhelming the API
-          if (i % 20 === 0 && i > 0) {
-            await new Promise(resolve => setTimeout(resolve, 50))
+          } else if (inserted) {
+            insertedCount += inserted.length || batch.length
+            // Update local state for first batch only to avoid UI lag
+            if (i === 0) {
+              setData(prev => [...inserted, ...prev])
+              setFilteredData(prev => [...inserted, ...prev])
+            }
           }
         }
-        
-        console.log(`Total inserted: ${insertedCount}/${toInsert.length}, Failed: ${failedRecords.length}`)
-        
-        setImportProgress({ current: toInsert.length, total: toInsert.length, status: `Complete! ${insertedCount} inserted, ${failedRecords.length} failed` })
-        
-        // Show failed records if any
-        if (failedRecords.length > 0) {
-          console.log('Failed records:', failedRecords)
-        }
+      }
+      
+      console.log(`Total inserted: ${insertedCount}/${toInsert.length}, Failed: ${failedRecords.length}`)
+      
+      setImportProgress({ current: toInsert.length, total: toInsert.length, status: `Complete! ${insertedCount} inserted, ${failedRecords.length} failed` })
+      
+      // Show failed records if any
+      if (failedRecords.length > 0) {
+        console.log('Failed records:', failedRecords)
       }
       
       // Update existing records
@@ -360,11 +375,22 @@ function Performance() {
       // Refresh total count
       setTotalCount(prev => prev + insertedCount)
       
-      // Refresh riders table for fast loading
+      // Sync unique riders from performance_records to riders table
+      const { data: syncedCount, error: syncError } = await syncRidersFromPerformance()
+      if (syncError) {
+        console.error('Failed to sync riders:', syncError)
+      } else {
+        console.log(`Synced ${syncedCount} riders to riders table`)
+      }
+      
+      // Also refresh riders table for fast loading
       const { error: refreshError } = await refreshRiders()
       if (refreshError) {
         console.error('Failed to refresh riders:', refreshError)
       }
+      
+      // Refresh data from database to show newly imported records
+      await fetchData()
     } catch (err) {
       console.error('File parsing error:', err)
       alert('Error parsing file: ' + err.message)
@@ -640,6 +666,7 @@ function Performance() {
                 placeholder="Name or ID..."
                 value={searchTerm}
                 onChange={(e) => handleSearchChange(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
                 className="w-full pl-2.5 pr-2.5 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all text-white placeholder-slate-400"
               />
             </div>
@@ -701,23 +728,6 @@ function Performance() {
             </select>
           </div>
         </div>
-        <div className="mt-2.5 flex justify-end gap-2">
-          <button
-            onClick={applyFilters}
-            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 shadow-sm hover:shadow-md hover:scale-105"
-          >
-            <Search className="w-3 h-3" />
-            Apply
-          </button>
-          <button
-            onClick={clearFilters}
-            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 border border-slate-600 hover:border-slate-500"
-            title="Clear filters"
-          >
-            <X className="w-3 h-3" />
-            Clear
-          </button>
-        </div>
       </div>
 
       {/* Data Table */}
@@ -768,7 +778,7 @@ function Performance() {
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.delivered}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.onhold}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{(row.pecentage * 100).toFixed(0)}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{(row.failed_rate * 100).toFixed(0)}%</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.failed_rate > 1 ? row.failed_rate.toFixed(0) : (row.failed_rate * 100).toFixed(0)}%</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.region}</td>
                 </tr>
               ))}

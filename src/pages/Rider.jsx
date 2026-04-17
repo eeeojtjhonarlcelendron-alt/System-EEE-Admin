@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Filter, Search, X, ChevronDown, UserCheck, UserX, Loader2 } from 'lucide-react'
-import { getRiders, getPerformanceRecords } from '../lib/data'
+import { getRiders, getPerformanceRecords, getFuelManagementRiders } from '../lib/data'
 
 function Rider() {
   const [data, setData] = useState([])
@@ -18,54 +18,89 @@ function Rider() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true)
-      const [ridersResult, performanceResult] = await Promise.all([
+      const [ridersResult, performanceResult, fuelResult] = await Promise.all([
         getRiders(),
-        getPerformanceRecords()
+        getPerformanceRecords(),
+        getFuelManagementRiders()
       ])
       
-      if (ridersResult.error) {
-        console.error('Error fetching riders:', ridersResult.error)
-      } else if (ridersResult.data) {
-        // Calculate deployment date from performance records
-        const performanceData = performanceResult.data || []
-        setPerformanceRecords(performanceData)
-        
-        const ridersWithDeploymentDate = ridersResult.data.map(rider => {
-          // Find all performance records for this rider
-          const riderRecords = performanceData.filter(p => 
-            p.rider_id === rider.rider_id || 
-            p.driver_name === rider.rider_name ||
-            p.operator_id === rider.rider_id
-          )
-          
-          // Get the earliest date (deployment date) and latest date (last active)
-          let deploymentDate = rider.deployment_date || 'N/A'
-          let lastActiveDate = rider.last_active || 'N/A'
-          
-          if (riderRecords.length > 0) {
-            const sortedDates = riderRecords
-              .map(p => p.date)
-              .filter(Boolean)
-              .sort((a, b) => new Date(a) - new Date(b))
-              
-            if (sortedDates.length > 0) {
-              // Earliest date = deployment date
-              deploymentDate = sortedDates[0].split('T')[0] || sortedDates[0]
-              // Latest date = last active
-              lastActiveDate = sortedDates[sortedDates.length - 1].split('T')[0] || sortedDates[sortedDates.length - 1]
-            }
-          }
-          
-          return {
-            ...rider,
-            deployment_date: deploymentDate,
-            last_active: lastActiveDate
+      // Get performance records
+      const performanceData = performanceResult.data || []
+      setPerformanceRecords(performanceData)
+      
+      // Create unique riders map from all sources
+      const ridersMap = new Map()
+      
+      // Add riders from riders table
+      if (ridersResult.data) {
+        ridersResult.data.forEach(rider => {
+          ridersMap.set(rider.rider_id, { ...rider, source: 'riders_table' })
+        })
+      }
+      
+      // Add riders from fuel_management_riders (prefer this data if exists)
+      if (fuelResult.data) {
+        fuelResult.data.forEach(rider => {
+          const existing = ridersMap.get(rider.rider_id)
+          if (existing) {
+            // Merge data, keeping fuel_management_riders values
+            ridersMap.set(rider.rider_id, { 
+              ...existing, 
+              ...rider, 
+              source: 'both' 
+            })
+          } else {
+            ridersMap.set(rider.rider_id, { 
+              ...rider, 
+              source: 'fuel_management' 
+            })
           }
         })
-        
-        setData(ridersWithDeploymentDate)
-        setFilteredData(ridersWithDeploymentDate)
       }
+      
+      // Add unique riders from performance records
+      performanceData.forEach(record => {
+        const riderId = record.rider_id
+        if (!ridersMap.has(riderId)) {
+          ridersMap.set(riderId, {
+            rider_id: riderId,
+            rider_name: record.driver_name,
+            operator_hub: record.hub,
+            region: record.region,
+            status: 'Active',
+            source: 'performance'
+          })
+        }
+      })
+      
+      // Calculate deployment dates for all riders
+      const allRiders = Array.from(ridersMap.values()).map(rider => {
+        const riderRecords = performanceData.filter(p => p.rider_id === rider.rider_id)
+        
+        let deploymentDate = rider.deployment_date || 'N/A'
+        let lastActiveDate = rider.last_active || 'N/A'
+        
+        if (riderRecords.length > 0) {
+          const sortedDates = riderRecords
+            .map(p => p.date)
+            .filter(Boolean)
+            .sort((a, b) => new Date(a) - new Date(b))
+            
+          if (sortedDates.length > 0) {
+            deploymentDate = sortedDates[0].split('T')[0] || sortedDates[0]
+            lastActiveDate = sortedDates[sortedDates.length - 1].split('T')[0] || sortedDates[sortedDates.length - 1]
+          }
+        }
+        
+        return {
+          ...rider,
+          deployment_date: deploymentDate,
+          last_active: lastActiveDate
+        }
+      })
+      
+      setData(allRiders)
+      setFilteredData(allRiders)
       setLoading(false)
     }
     fetchData()
