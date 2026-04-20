@@ -134,6 +134,11 @@ function KPI() {
     setFilteredData(result)
   }
 
+  // Auto-apply filters when they change
+  useEffect(() => {
+    applyFilters()
+  }, [filters, applyFilters])
+
   const clearFilters = () => {
     setFilters({ dateFrom: '', dateTo: '', subRegion: '', operatorHub: '', rider: '', grade: '' })
     setSearchTerm('')
@@ -332,7 +337,7 @@ function KPI() {
             Upload
           </button>
           <button
-            onClick={() => exportData('excel')}
+            onClick={handleExport}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 font-medium text-xs hover:shadow-md"
           >
             <Download className="w-3.5 h-3.5" />
@@ -383,55 +388,6 @@ function KPI() {
               className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             />
           </div>
-          <div>
-            <label className="flex items-center gap-1 text-[10px] font-medium text-slate-400 mb-1">
-              <MapPin className="w-3 h-3 text-slate-500" />
-              Sub Region
-            </label>
-            <select
-              value={filters.subRegion}
-              onChange={(e) => handleFilterChange('subRegion', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
-            >
-              <option value="" className="bg-slate-700">All Sub Regions</option>
-              {uniqueSubRegions.map(subRegion => (
-                <option key={subRegion} value={subRegion} className="bg-slate-700">{subRegion}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="flex items-center gap-1 text-[10px] font-medium text-slate-400 mb-1">
-              <Building2 className="w-3 h-3 text-slate-500" />
-              Hub
-            </label>
-            <select
-              value={filters.operatorHub}
-              onChange={(e) => handleFilterChange('operatorHub', e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
-            >
-              <option value="" className="bg-slate-700">All Hubs</option>
-              {uniqueHubs.map(hub => (
-                <option key={hub} value={hub} className="bg-slate-700">{hub}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="mt-2.5 flex justify-end gap-2">
-          <button
-            onClick={applyFilters}
-            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 shadow-sm hover:shadow-md hover:scale-105"
-          >
-            <Search className="w-3 h-3" />
-            Apply
-          </button>
-          <button
-            onClick={clearFilters}
-            className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 border border-slate-600 hover:border-slate-500"
-            title="Clear filters"
-          >
-            <X className="w-3 h-3" />
-            Clear
-          </button>
         </div>
       </div>
 

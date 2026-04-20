@@ -1,5 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import html2canvas from 'html2canvas'
+import jsPDF from 'jspdf'
 import { 
   getDashboardMetrics,
   getDashboardStats,
@@ -13,15 +15,25 @@ import {
   Users, 
   Target, 
   Zap, 
-  Globe, 
-  Download, 
-  RefreshCw, 
+  ArrowUpRight, 
+  ArrowDownRight, 
+  Calendar,
+  Search,
+  X,
   Filter,
-  CheckCircle,
-  Package,
-  Loader2, 
-  ChevronDown, 
+  MapPin,
   Building2,
+  ChevronDown,
+  ChevronUp,
+  Globe,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+  FileSpreadsheet,
+  Download,
+  Loader2, 
+  Package,
+  CheckCircle,
   LayoutGrid,
   PauseCircle,
   Sparkles
@@ -540,6 +552,7 @@ function Dashboard() {
       .map(rider => ({
         riderId: rider.rider_id,
         riderName: rider.rider_name,
+        status: rider.status || 'N/A',
         deployedDate: rider.deployment_date || 'N/A',
         lastActiveDate: rider.last_active || 'N/A',
         hub: rider.operator_hub || 'Unknown'
@@ -1182,6 +1195,550 @@ function Dashboard() {
     return result
   }, [performanceRecords, selectedRider, riderTrendView, riderTrendMetric])
 
+  // Handle export of filtered chart data to PDF
+  const handleExport = useCallback(() => {
+    try {
+      // Create PDF
+      const pdf = new jsPDF('p', 'mm', 'a4')
+      const pdfWidth = pdf.internal.pageSize.getWidth()
+      const pageHeight = pdf.internal.pageSize.getHeight()
+      const margin = 15
+      let currentY = margin
+
+      // === HEADER SECTION ===
+      pdf.setFillColor(168, 48, 48)
+      pdf.rect(0, 0, pdfWidth, 35, 'F')
+      
+      pdf.setTextColor(255, 255, 255)
+      pdf.setFontSize(20)
+      pdf.setFont(undefined, 'bold')
+      pdf.text('DASHBOARD REPORT', margin, 22)
+      
+      pdf.setFontSize(10)
+      pdf.setFont(undefined, 'normal')
+      pdf.text(`Generated on: ${new Date().toLocaleString()}`, margin, 30)
+
+      currentY = 45
+
+      // Report Title & Filters
+      pdf.setTextColor(51, 65, 85)
+      pdf.setFontSize(14)
+      pdf.setFont(undefined, 'bold')
+      
+      let reportTitle = ''
+      let filterInfo = []
+      
+      // Calculate date range for display
+      let dateRangeStr = 'All Dates'
+      
+      // For Hub Level: calculate L7D range (selected date - 7 days)
+      if (dashboardView === 'hub') {
+        if (selectedDate) {
+          const endDate = new Date(selectedDate)
+          const startDate = new Date(selectedDate)
+          startDate.setDate(endDate.getDate() - 7)
+          const formatDate = (d) => d.toISOString().split('T')[0]
+          dateRangeStr = `${formatDate(startDate)} to ${formatDate(endDate)}`
+        }
+      } else if (dashboardView === 'rider' && selectedRider && riderLevelData.length > 0) {
+        const rider = riderLevelData[0]
+        if (rider.trend && rider.trend.length > 0) {
+          const dates = rider.trend.map(t => t.date).filter(d => d).sort()
+          dateRangeStr = `${dates[0]} to ${dates[dates.length - 1]}`
+        } else if (selectedDate) {
+          dateRangeStr = selectedDate
+        }
+      } else if (selectedDate) {
+        dateRangeStr = selectedDate
+      }
+      
+      if (dashboardView === 'hub') {
+        reportTitle = 'Hub Level Dashboard'
+        filterInfo = [`Hub: ${selectedHub || 'All Hubs'}`, `Date Range: ${dateRangeStr}`]
+      } else if (dashboardView === 'rider') {
+        reportTitle = 'Rider Level Dashboard'
+        filterInfo = [
+          selectedRider ? `Rider: ${riderLevelData[0]?.riderName || selectedRider}` : 'Rider: All Riders',
+          `Date Range: ${dateRangeStr}`
+        ]
+      } else if (dashboardView === 'overall') {
+        reportTitle = 'Overall Dashboard'
+        filterInfo = [`Region: ${selectedRegion || 'All Regions'}`, `Date Range: ${dateRangeStr}`]
+      }
+      
+      pdf.text(reportTitle, margin, currentY)
+      currentY += 8
+
+      // Filters box
+      pdf.setFillColor(241, 245, 249)
+      pdf.rect(margin, currentY - 3, pdfWidth - (margin * 2), 12, 'F')
+      pdf.setFontSize(9)
+      pdf.setTextColor(100, 116, 139)
+      pdf.text(`Filters: ${filterInfo.join(' | ')}`, margin + 3, currentY + 4)
+      currentY += 18
+
+      // === SUMMARY STATS SECTION ===
+      const comparisonData = dashboardView === 'overall' ? getComparisonData() : []
+      
+      pdf.setTextColor(51, 65, 85)
+      pdf.setFontSize(12)
+      pdf.setFont(undefined, 'bold')
+      pdf.text('Summary Statistics', margin, currentY)
+      currentY += 8
+
+      // Get summary data based on view
+      let summaryStats = []
+      if (dashboardView === 'hub' && filteredStats) {
+        summaryStats = [
+          { label: 'Success Rate', value: `${filteredStats.successRate || 0}%` },
+          { label: 'Active Riders', value: String(filteredStats.activeRiders || 0) },
+          { label: 'Delivered', value: String(filteredStats.delivered || 0) },
+          { label: 'On-Hold', value: String(filteredStats.onHold || 0) }
+        ]
+      } else if (dashboardView === 'rider' && selectedRider && riderLevelData.length > 0) {
+        const rider = riderLevelData[0]
+        summaryStats = [
+          { label: 'Delivered', value: String(rider.delivered || 0) },
+          { label: 'On-Hold', value: String(rider.onHold || 0) },
+          { label: 'Success Rate', value: `${rider.successRate?.toFixed(1) || 0}%` },
+          { label: 'Productivity', value: String(rider.productivity || 0) }
+        ]
+      } else if (dashboardView === 'overall') {
+        const totalHubs = comparisonData.length
+        summaryStats = [
+          { label: 'Total Hubs', value: String(totalHubs) },
+          { label: 'Region', value: selectedRegion || 'All' }
+        ]
+      }
+
+      // Draw summary boxes
+      const boxWidth = 42
+      const boxHeight = 20
+      const boxSpacing = 3
+      let boxX = margin
+
+      summaryStats.forEach((stat, index) => {
+        if (boxX + boxWidth > pdfWidth - margin) {
+          boxX = margin
+          currentY += boxHeight + boxSpacing + 5
+        }
+        
+        // Box background
+        pdf.setFillColor(254, 242, 242)
+        pdf.rect(boxX, currentY, boxWidth, boxHeight, 'F')
+        pdf.setDrawColor(168, 48, 48)
+        pdf.rect(boxX, currentY, boxWidth, boxHeight, 'S')
+        
+        // Label
+        pdf.setFontSize(8)
+        pdf.setTextColor(100, 116, 139)
+        pdf.setFont(undefined, 'normal')
+        pdf.text(String(stat.label), boxX + 3, currentY + 7)
+        
+        // Value
+        pdf.setFontSize(11)
+        pdf.setTextColor(168, 48, 48)
+        pdf.setFont(undefined, 'bold')
+        pdf.text(String(stat.value), boxX + 3, currentY + 15)
+        
+        boxX += boxWidth + boxSpacing
+      })
+
+      currentY += boxHeight + 15
+
+      // === DATA TABLE SECTION ===
+      const dataToExport = dashboardView === 'hub' 
+        ? filteredChartData 
+        : dashboardView === 'rider' 
+          ? (selectedRider ? riderLevelData : filteredRidersNoRoute)
+          : comparisonData
+
+      if (dataToExport.length > 0) {
+        pdf.setTextColor(51, 65, 85)
+        pdf.setFontSize(12)
+        pdf.setFont(undefined, 'bold')
+        pdf.text('Detailed Data', margin, currentY)
+        currentY += 10
+
+        // Table header background
+        pdf.setFillColor(168, 48, 48)
+        pdf.rect(margin, currentY - 6, pdfWidth - (margin * 2), 10, 'F')
+        pdf.setTextColor(255, 255, 255)
+        pdf.setFontSize(9)
+        pdf.setFont(undefined, 'bold')
+
+        const colWidth = (pdfWidth - (margin * 2)) / 8
+        let startY = currentY
+
+        if (dashboardView === 'hub') {
+          pdf.text('Date', margin + 3, startY)
+          pdf.text('Success Rate', margin + colWidth + 3, startY)
+          pdf.text('Riders', margin + (colWidth * 2) + 3, startY)
+          pdf.text('Delivered', margin + (colWidth * 3) + 3, startY)
+          pdf.text('On-Hold', margin + (colWidth * 4) + 3, startY)
+          pdf.text('Productivity', margin + (colWidth * 5) + 3, startY)
+          pdf.text('CFR', margin + (colWidth * 6) + 3, startY)
+          pdf.text('Scorecard', margin + (colWidth * 7) + 3, startY)
+          startY += 8
+
+          pdf.setTextColor(51, 65, 85)
+          pdf.setFont(undefined, 'normal')
+          pdf.setFontSize(7)
+
+          filteredChartData.forEach((item, index) => {
+            if (startY > 280) {
+              pdf.addPage()
+              startY = 15
+            }
+            if (index % 2 === 0) {
+              pdf.setFillColor(248, 250, 252)
+              pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
+            }
+            const dateStr = item.month ? String(item.month) : 'N/A'
+            const successRate = item['Success Rate'] != null ? `${item['Success Rate']}%` : '0%'
+            const riders = item['Riders'] != null ? String(item['Riders']) : '0'
+            const delivered = item['Delivered'] != null ? String(item['Delivered']) : '0'
+            const onHold = item['On-Hold'] != null ? String(item['On-Hold']) : '0'
+            const productivity = item['Productivity'] != null ? String(item['Productivity']) : '0'
+            const cfr = item['Clear Floor Rate'] != null ? `${item['Clear Floor Rate']}%` : '0%'
+            const scorecard = item['Scorecard'] != null ? String(item['Scorecard']) : 'N/A'
+            pdf.text(dateStr, margin + 3, startY)
+            pdf.text(successRate, margin + colWidth + 3, startY)
+            pdf.text(riders, margin + (colWidth * 2) + 3, startY)
+            pdf.text(delivered, margin + (colWidth * 3) + 3, startY)
+            pdf.text(onHold, margin + (colWidth * 4) + 3, startY)
+            pdf.text(productivity, margin + (colWidth * 5) + 3, startY)
+            pdf.text(cfr, margin + (colWidth * 6) + 3, startY)
+            pdf.text(scorecard, margin + (colWidth * 7) + 3, startY)
+            startY += 6
+          })
+
+          // === KPI DISTRIBUTION SECTION ===
+          startY += 15
+          if (startY > 250) {
+            pdf.addPage()
+            startY = 15
+          }
+          pdf.setTextColor(51, 65, 85)
+          pdf.setFontSize(12)
+          pdf.setFont(undefined, 'bold')
+          pdf.text('KPI Distribution', margin, startY)
+          startY += 10
+
+          if (kpiGradeData && kpiGradeData.length > 0) {
+            pdf.setFillColor(168, 48, 48)
+            pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
+            pdf.setTextColor(255, 255, 255)
+            pdf.setFontSize(9)
+            pdf.setFont(undefined, 'bold')
+            pdf.text('Metric', margin + 3, startY)
+            pdf.text('Value', margin + colWidth + 3, startY)
+            startY += 8
+
+            pdf.setTextColor(51, 65, 85)
+            pdf.setFont(undefined, 'normal')
+            pdf.setFontSize(8)
+
+            kpiGradeData.forEach((kpi, index) => {
+              if (startY > 280) {
+                pdf.addPage()
+                startY = 15
+              }
+              if (index % 2 === 0) {
+                pdf.setFillColor(248, 250, 252)
+                pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
+              }
+              pdf.text(String(kpi.name), margin + 3, startY)
+              pdf.text(`${kpi.value}%`, margin + colWidth + 3, startY)
+              startY += 6
+            })
+          } else {
+            pdf.setTextColor(100, 116, 139)
+            pdf.setFontSize(9)
+            pdf.setFont(undefined, 'normal')
+            pdf.text('No KPI data available', margin + 3, startY)
+            startY += 6
+          }
+
+          // === RIDERS NO ROUTE SECTION ===
+          startY += 15
+          if (startY > 250) {
+            pdf.addPage()
+            startY = 15
+          }
+          pdf.setTextColor(51, 65, 85)
+          pdf.setFontSize(12)
+          pdf.setFont(undefined, 'bold')
+          pdf.text('Riders No Route', margin, startY)
+          startY += 10
+
+          if (filteredRidersNoRoute && filteredRidersNoRoute.length > 0) {
+            const ridersColWidth = (pdfWidth - (margin * 2)) / 3
+            pdf.setFillColor(168, 48, 48)
+            pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
+            pdf.setTextColor(255, 255, 255)
+            pdf.setFontSize(9)
+            pdf.setFont(undefined, 'bold')
+            pdf.text('Rider ID', margin + 3, startY)
+            pdf.text('Rider Name', margin + ridersColWidth + 3, startY)
+            pdf.text('Status', margin + (ridersColWidth * 2) + 3, startY)
+            startY += 8
+
+            pdf.setTextColor(51, 65, 85)
+            pdf.setFont(undefined, 'normal')
+            pdf.setFontSize(8)
+
+            filteredRidersNoRoute.forEach((rider, index) => {
+              if (startY > 280) {
+                pdf.addPage()
+                startY = 15
+              }
+              if (index % 2 === 0) {
+                pdf.setFillColor(248, 250, 252)
+                pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
+              }
+              pdf.text(String(rider.riderId || ''), margin + 3, startY)
+              pdf.text(String(rider.riderName || 'N/A'), margin + ridersColWidth + 3, startY)
+              pdf.text(String(rider.status || 'N/A'), margin + (ridersColWidth * 2) + 3, startY)
+              startY += 6
+            })
+
+          } else {
+            pdf.setTextColor(100, 116, 139)
+            pdf.setFontSize(9)
+            pdf.setFont(undefined, 'normal')
+            pdf.text('No riders without route', margin + 3, startY)
+            startY += 6
+          }
+
+          // === RETENTION & ATTRITION SECTION ===
+          startY += 15
+          if (startY > 250) {
+            pdf.addPage()
+            startY = 15
+          }
+          pdf.setTextColor(51, 65, 85)
+          pdf.setFontSize(12)
+          pdf.setFont(undefined, 'bold')
+          pdf.text('Retention & Attrition Rate', margin, startY)
+          startY += 10
+
+          if (retentionMetrics && retentionMetrics.totalRiders > 0) {
+            const retentionColWidth = (pdfWidth - (margin * 2)) / 4
+            pdf.setFillColor(168, 48, 48)
+            pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
+            pdf.setTextColor(255, 255, 255)
+            pdf.setFontSize(9)
+            pdf.setFont(undefined, 'bold')
+            pdf.text('Hub', margin + 3, startY)
+            pdf.text('Total', margin + retentionColWidth + 3, startY)
+            pdf.text('Active', margin + (retentionColWidth * 2) + 3, startY)
+            pdf.text('Attrition', margin + (retentionColWidth * 3) + 3, startY)
+            startY += 8
+
+            pdf.setTextColor(51, 65, 85)
+            pdf.setFont(undefined, 'normal')
+            pdf.setFontSize(8)
+
+            // Display single retention metrics row
+            pdf.setFillColor(248, 250, 252)
+            pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
+            pdf.text(String(selectedHub || 'N/A'), margin + 3, startY)
+            pdf.text(String(retentionMetrics.totalRiders || 0), margin + retentionColWidth + 3, startY)
+            pdf.text(String(retentionMetrics.activeRiders || 0), margin + (retentionColWidth * 2) + 3, startY)
+            pdf.text(String(retentionMetrics.inactiveRiders || 0), margin + (retentionColWidth * 3) + 3, startY)
+
+            // Show attrition riders if any
+            if (retentionMetrics.attritionRiders && retentionMetrics.attritionRiders.length > 0) {
+              startY += 15
+              if (startY > 250) {
+                pdf.addPage()
+                startY = 15
+              }
+              pdf.setFontSize(10)
+              pdf.setFont(undefined, 'bold')
+              pdf.text('Inactive Riders Breakdown', margin, startY)
+              startY += 8
+
+              pdf.setFillColor(168, 48, 48)
+              pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
+              pdf.setTextColor(255, 255, 255)
+              pdf.setFontSize(9)
+              pdf.setFont(undefined, 'bold')
+              pdf.text('ID', margin + 3, startY)
+              pdf.text('Name', margin + colWidth + 3, startY)
+              pdf.text('Last Active', margin + (colWidth * 2) + 3, startY)
+              pdf.text('Status', margin + (colWidth * 3) + 3, startY)
+              startY += 8
+
+              pdf.setTextColor(51, 65, 85)
+              pdf.setFont(undefined, 'normal')
+              pdf.setFontSize(8)
+
+              retentionMetrics.attritionRiders.slice(0, 15).forEach((rider, index) => {
+                if (startY > 280) {
+                  pdf.addPage()
+                  startY = 15
+                }
+                if (index % 2 === 0) {
+                  pdf.setFillColor(248, 250, 252)
+                  pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
+                }
+                pdf.text(String(rider.id), margin + 3, startY)
+                pdf.text(String(rider.name || 'N/A'), margin + colWidth + 3, startY)
+                pdf.text(String(rider.lastActive), margin + (colWidth * 2) + 3, startY)
+                pdf.text(String(rider.status), margin + (colWidth * 3) + 3, startY)
+                startY += 6
+              })
+
+              if (retentionMetrics.attritionRiders.length > 15) {
+                pdf.setTextColor(100, 116, 139)
+                pdf.text(`... and ${retentionMetrics.attritionRiders.length - 15} more`, margin + 3, startY)
+              }
+            }
+          }
+        } else if (dashboardView === 'rider') {
+          if (selectedRider && riderLevelData.length > 0) {
+            const rider = riderLevelData[0]
+            const metrics = [
+              { label: 'Rider ID', value: rider.riderId },
+              { label: 'Rider Name', value: rider.riderName },
+              { label: 'Hub', value: rider.hub },
+              { label: 'Delivered', value: rider.delivered },
+              { label: 'On-Hold', value: rider.onHold },
+              { label: 'Success Rate', value: `${rider.successRate?.toFixed(1) || 0}%` },
+              { label: 'Productivity', value: rider.productivity }
+            ]
+
+            pdf.setTextColor(51, 65, 85)
+            pdf.setFont(undefined, 'normal')
+            pdf.setFontSize(8)
+
+            metrics.forEach((metric, index) => {
+              if (startY > 280) {
+                pdf.addPage()
+                startY = 15
+              }
+              if (index % 2 === 0) {
+                pdf.setFillColor(248, 250, 252)
+                pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
+              }
+              pdf.setFont(undefined, 'bold')
+              pdf.text(String(metric.label), margin + 3, startY)
+              pdf.setFont(undefined, 'normal')
+              pdf.text(String(metric.value), margin + colWidth + 3, startY)
+              startY += 6
+            })
+
+            // Daily trend data
+            if (rider.trend && rider.trend.length > 0) {
+              startY += 10
+              pdf.setFillColor(168, 48, 48)
+              pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
+              pdf.setTextColor(255, 255, 255)
+              pdf.setFontSize(9)
+              pdf.setFont(undefined, 'bold')
+              pdf.text('Date', margin + 3, startY)
+              pdf.text('Delivered', margin + colWidth + 3, startY)
+              startY += 8
+
+              pdf.setTextColor(51, 65, 85)
+              pdf.setFont(undefined, 'normal')
+              pdf.setFontSize(8)
+
+              rider.trend.forEach((t, index) => {
+                if (startY > 280) {
+                  pdf.addPage()
+                  startY = 15
+                }
+                if (index % 2 === 0) {
+                  pdf.setFillColor(248, 250, 252)
+                  pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
+                }
+                pdf.text(String(t.date), margin + 3, startY)
+                pdf.text(String(t.delivered), margin + colWidth + 3, startY)
+                startY += 6
+              })
+            }
+          } else {
+            pdf.text('Rider ID', margin + 3, startY)
+            pdf.text('Rider Name', margin + colWidth + 3, startY)
+            pdf.text('Hub', margin + (colWidth * 2) + 3, startY)
+            pdf.text('Status', margin + (colWidth * 3) + 3, startY)
+            startY += 8
+
+            pdf.setTextColor(51, 65, 85)
+            pdf.setFont(undefined, 'normal')
+            pdf.setFontSize(8)
+
+            filteredRidersNoRoute.forEach((rider, index) => {
+              if (startY > 280) {
+                pdf.addPage()
+                startY = 15
+              }
+              if (index % 2 === 0) {
+                pdf.setFillColor(248, 250, 252)
+                pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
+              }
+              pdf.text(String(rider.riderId || ''), margin + 3, startY)
+              pdf.text(String(rider.riderName || 'N/A'), margin + colWidth + 3, startY)
+              pdf.text(String(rider.hub || 'N/A'), margin + (colWidth * 2) + 3, startY)
+              pdf.text(String(rider.status || 'N/A'), margin + (colWidth * 3) + 3, startY)
+              startY += 6
+            })
+          }
+        } else if (dashboardView === 'overall') {
+          // Headers for comparison data
+          pdf.setFont(undefined, 'bold')
+          pdf.text('Hub', 10, startY)
+          pdf.text('CFR P7D', 45, startY)
+          pdf.text('CFR L7D', 70, startY)
+          pdf.text('SR P7D', 95, startY)
+          pdf.text('SR L7D', 120, startY)
+          pdf.text('Prod P7D', 145, startY)
+          pdf.text('Prod L7D', 170, startY)
+          pdf.setFont(undefined, 'normal')
+          startY += 6
+
+          comparisonData.forEach((item, index) => {
+            if (startY > 280) {
+              pdf.addPage()
+              startY = 15
+            }
+            pdf.text(item.hub, 10, startY)
+            pdf.text(`${item.cfrP7D}%`, 45, startY)
+            pdf.text(`${item.cfrL7D}%`, 70, startY)
+            pdf.text(`${item.srP7D}%`, 95, startY)
+            pdf.text(`${item.srL7D}%`, 120, startY)
+            pdf.text(`${item.prodP7D}%`, 145, startY)
+            pdf.text(`${item.prodL7D}%`, 170, startY)
+            startY += 5
+          })
+        }
+      }
+
+      // Download the PDF
+      const filename = dashboardView === 'hub' 
+        ? `hub-level-dashboard-${selectedHub || 'all'}-${new Date().toISOString().split('T')[0]}.pdf`
+        : dashboardView === 'rider'
+          ? (selectedRider 
+            ? `rider-dashboard-${riderLevelData[0]?.riderName || selectedRider}-${new Date().toISOString().split('T')[0]}.pdf`
+            : `riders-list-${selectedHub || 'all'}-${new Date().toISOString().split('T')[0]}.pdf`)
+          : `overall-dashboard-${selectedRegion || 'all-regions'}-${new Date().toISOString().split('T')[0]}.pdf`
+
+      // === FOOTER ===
+      pdf.setTextColor(150, 150, 150)
+      pdf.setFontSize(8)
+      pdf.setFont(undefined, 'normal')
+      pdf.text('--- End of Report ---', pdfWidth / 2, pageHeight - 10, { align: 'center' })
+
+      pdf.save(filename)
+    } catch (error) {
+      console.error('Error exporting PDF:', error)
+      alert('Failed to export PDF. Please try again.')
+    }
+  }, [dashboardView, filteredChartData, filteredRidersNoRoute, riderLevelData, getComparisonData, filteredStats, kpiGradeData, retentionMetrics, selectedHub, selectedRegion, selectedRider, selectedDate])
+
   const COLORS = ['#a83030', '#c94c4c', '#e07e7e', '#f0b1b1', '#742a2a']
 
   if (loading) {
@@ -1203,39 +1760,48 @@ function Dashboard() {
       
       {/* View Toggle */}
       <div className="relative bg-slate-800/80 backdrop-blur-md rounded-lg p-2 border border-slate-600/50">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setDashboardView('hub')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all duration-300 ${
+                dashboardView === 'hub'
+                  ? 'bg-maroon-600 text-white shadow-[0_0_10px_rgba(168,48,48,0.5)]'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              Hub Level
+            </button>
+            <button
+              onClick={() => setDashboardView('rider')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all duration-300 ${
+                dashboardView === 'rider'
+                  ? 'bg-maroon-600 text-white shadow-[0_0_10px_rgba(168,48,48,0.5)]'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              Rider Level
+            </button>
+            <button
+              onClick={() => setDashboardView('overall')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all duration-300 ${
+                dashboardView === 'overall'
+                  ? 'bg-maroon-600 text-white shadow-[0_0_10px_rgba(168,48,48,0.5)]'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <Globe className="w-3.5 h-3.5" />
+              Overall
+            </button>
+          </div>
           <button
-            onClick={() => setDashboardView('hub')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all duration-300 ${
-              dashboardView === 'hub'
-                ? 'bg-maroon-600 text-white shadow-[0_0_10px_rgba(168,48,48,0.5)]'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-            }`}
+            onClick={handleExport}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 font-medium text-xs hover:shadow-md"
           >
-            <Building2 className="w-3.5 h-3.5" />
-            Hub Level
-          </button>
-          <button
-            onClick={() => setDashboardView('rider')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all duration-300 ${
-              dashboardView === 'rider'
-                ? 'bg-maroon-600 text-white shadow-[0_0_10px_rgba(168,48,48,0.5)]'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            Rider Level
-          </button>
-          <button
-            onClick={() => setDashboardView('overall')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all duration-300 ${
-              dashboardView === 'overall'
-                ? 'bg-maroon-600 text-white shadow-[0_0_10px_rgba(168,48,48,0.5)]'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-            }`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            Overall
+            <Download className="w-3.5 h-3.5" />
+            Export
           </button>
         </div>
       </div>
