@@ -1008,8 +1008,28 @@ function Dashboard() {
           return uniqueRiders.size
         }
         
+        // Map full hub names to shortcuts
+        const hubShortcuts = {
+          'Villaba Leyte Hub': 'Villaba',
+          'Calbiga Western Samar Hub': 'Calbiga',
+          'Basey Western Samar Hub': 'Basey',
+          'Alangalang Leyte Hub': 'Alangalang',
+          'Carigara Leyte Hub': 'Carigara',
+          'Palo Leyte Hub': 'Palo',
+          'Ormoc Leyte Hub': 'Ormoc',
+          'Tacloban Leyte Hub': 'Tacloban',
+          'Baybay Leyte Hub': 'Baybay',
+          'Burauen Leyte Hub': 'Burauen',
+          'Cebu Hub': 'Cebu',
+          'Mandaue Cebu Hub': 'Mandaue',
+          'Lapu-Lapu Cebu Hub': 'Lapu-Lapu'
+        }
+        
+        const cleanHub = hub.replace('OP ', '').replace(' Cebu Hub', ' Cebu')
+        const shortHub = hubShortcuts[cleanHub] || cleanHub.split(' ')[0]
+        
         return {
-          hub: hub.replace('OP ', '').replace(' Cebu Hub', ''),
+          hub: shortHub,
           // Clear Floor Rate
           cfrP7D: calcAvg(p7dRecords, 'clear_floor_rate', true),
           cfrL7D: calcAvg(l7dRecords, 'clear_floor_rate', true),
