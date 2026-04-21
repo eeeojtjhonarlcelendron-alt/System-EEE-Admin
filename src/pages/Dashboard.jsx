@@ -208,6 +208,10 @@ function Dashboard() {
   const [retentionView, setRetentionView] = useState('MTD') // 'MTD' or 'L7D' for Retention & Attrition
   const [riderTrendView, setRiderTrendView] = useState('MTD') // 'MTD' or 'L7D' for Rider Delivery Trend
   const [riderTrendMetric, setRiderTrendMetric] = useState('delivered') // 'delivered', 'onHold', 'successRate', 'productivity'
+  const [riderFromDate, setRiderFromDate] = useState('') // From date for Rider Level filter
+  const [riderToDate, setRiderToDate] = useState('') // To date for Rider Level filter
+  const [hubFromDate, setHubFromDate] = useState('') // From date for Hub Level filter
+  const [hubToDate, setHubToDate] = useState('') // To date for Hub Level filter
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   // Fetch all data
@@ -450,6 +454,62 @@ function Dashboard() {
     fetchData()
   }, [])
 
+  // Handle refresh button click
+  const handleRefreshMetrics = useCallback(async () => {
+    if (isRefreshing) return
+    
+    setIsRefreshing(true)
+    
+    try {
+      const [statsResult, hubResult, performanceResult, kpiResult, dashboardResult, ridersResult] = await Promise.all([
+        getDashboardStats(),
+        getRiderHubStats(),
+        getPerformanceRecords(),
+        getKpiRecords(),
+        getDashboardMetrics(),
+        getRiders()
+      ])
+
+      if (statsResult.data) {
+        setStats(statsResult.data)
+      }
+      
+      if (dashboardResult.data) {
+        setDashboardMetrics(dashboardResult.data)
+      }
+      
+      if (ridersResult.data) {
+        setRidersData(ridersResult.data)
+      }
+      
+      if (hubResult.data) {
+        setRiderStats(hubResult.data)
+        const hubPerf = hubResult.data.map(hub => ({
+          name: hub.hub,
+          riders: hub.riders,
+          deliveryRate: Math.min(95, 70 + Math.random() * 25),
+          onTimeRate: Math.min(98, 75 + Math.random() * 23),
+          completionRate: Math.min(100, 80 + Math.random() * 20)
+        })).slice(0, 5)
+        setHubPerformance(hubPerf)
+      }
+      
+      if (performanceResult.data) {
+        setPerformanceRecords(performanceResult.data)
+      }
+      
+      if (kpiResult.data) {
+        setKpiData(kpiResult.data)
+        const subRegions = [...new Set(kpiResult.data.map(item => item.sub_region).filter(Boolean))]
+        setUniqueRegions(subRegions)
+      }
+    } catch (error) {
+      console.error('Error refreshing metrics:', error)
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [isRefreshing])
+
   // Filter data based on selections
   const filteredHubPerformance = useMemo(() => {
     let result = hubPerformance
@@ -508,8 +568,8 @@ function Dashboard() {
       return []
     }
     
-    // Only show data when both hub and date are selected
-    if (!selectedHub || !selectedDate) {
+    // Only show data when hub is selected and date(s) are selected
+    if (!selectedHub || (!selectedDate && !hubFromDate && !hubToDate)) {
       return []
     }
     
@@ -518,9 +578,12 @@ function Dashboard() {
     // Filter by hub
     filtered = filtered.filter(rider => rider.operator_hub === selectedHub)
     
-    // Filter performance records by date
+    // Filter performance records by date range (From/To dates take priority)
     let performanceToCheck = performanceRecords.filter(p => {
       const recordDate = p.date?.split('T')[0] || p.date
+      if (hubFromDate && hubToDate) {
+        return recordDate >= hubFromDate && recordDate <= hubToDate
+      }
       return recordDate === selectedDate
     })
     
@@ -559,7 +622,7 @@ function Dashboard() {
       }))
     
     return ridersNoRoute
-  }, [ridersData, performanceRecords, selectedHub, selectedDate])
+  }, [ridersData, performanceRecords, selectedHub, selectedDate, hubFromDate, hubToDate])
 
   // Get unique categories for filter
   const uniqueCategories = useMemo(() => {
@@ -593,8 +656,14 @@ function Dashboard() {
       filtered = filtered.filter(item => item.hub === selectedHub)
     }
     
-    // Filter by date if selected
-    if (selectedDate) {
+    // Filter by date range (From/To dates take priority in Hub view)
+    if (dashboardView === 'hub' && hubFromDate && hubToDate) {
+      filtered = filtered.filter(item => {
+        const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
+        return itemDate >= hubFromDate && itemDate <= hubToDate
+      })
+    } else if (selectedDate) {
+      // Fallback to single date if no range is set
       filtered = filtered.filter(item => {
         const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
         return itemDate === selectedDate
@@ -602,7 +671,7 @@ function Dashboard() {
     }
     
     // For hub view: if no filters selected, show 0
-    if (dashboardView === 'hub' && !selectedHub && !selectedDate) {
+    if (dashboardView === 'hub' && !selectedHub && !selectedDate && !hubFromDate && !hubToDate) {
       return {
         successRate: 0,
         activeRiders: 0,
@@ -659,7 +728,7 @@ function Dashboard() {
       clearFloorRate: avgClearFloor,
       scorecard: avgScorecard
     }
-  }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap])
+  }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap, hubFromDate, hubToDate])
 
   // KPI spider chart data based on filters
   // In Overall view with selectedRegion, shows KPI data for all hubs in that region
@@ -675,7 +744,7 @@ function Dashboard() {
     }
     
     // For hub view: if no filters selected, show 0
-    if (dashboardView === 'hub' && !selectedHub && !selectedDate) {
+    if (dashboardView === 'hub' && !selectedHub && !selectedDate && !hubFromDate && !hubToDate) {
       return [
         { name: 'Clear Floor Rate', value: 0 },
         { name: 'Success Rate', value: 0 },
@@ -713,8 +782,14 @@ function Dashboard() {
       filteredKpiData = filteredKpiData.filter(item => item.operator_hub === selectedHub)
     }
     
-    // Filter by date if selected
-    if (selectedDate) {
+    // Filter by date range (From/To dates take priority in Hub view)
+    if (dashboardView === 'hub' && hubFromDate && hubToDate) {
+      filteredKpiData = filteredKpiData.filter(item => {
+        const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
+        return itemDate >= hubFromDate && itemDate <= hubToDate
+      })
+    } else if (selectedDate) {
+      // Fallback to single date if no range is set
       filteredKpiData = filteredKpiData.filter(item => {
         const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
         return itemDate === selectedDate
@@ -741,92 +816,72 @@ function Dashboard() {
     })
     
     return result
-  }, [kpiData, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap])
-
-  // Function to refresh dashboard metrics
-  const handleRefreshMetrics = async () => {
-    setIsRefreshing(true)
-    try {
-      // Call the refresh function via Supabase RPC
-      const { data, error } = await supabase.rpc('refresh_dashboard_metrics')
-      if (error) {
-        // Error refreshing dashboard metrics
-      } else {
-          // Refetch data to get updated metrics
-        window.location.reload()
-      }
-    } catch (error) {
-      // Error occurred
-    } finally {
-      setIsRefreshing(false)
-    }
-  }
+  }, [kpiData, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap, hubFromDate, hubToDate])
 
   // Filter chart data based on hub/region and date selection - using dashboard_metrics
-  // In Overall view with selectedRegion, shows chart data for all hubs in that region
-  const filteredChartData = useMemo(() => {
-    // For hub view: if no filters selected, return empty array
-    if (dashboardView === 'hub' && !selectedHub && !selectedDate) {
-      return []
-    }
+// In Overall view with selectedRegion, shows chart data for all hubs in that region
+const filteredChartData = useMemo(() => {
+  // For hub view: if no filters selected, return empty array
+  if (dashboardView === 'hub' && !selectedHub && !selectedDate) {
+    return []
+  }
+  
+  // For overall view: if no region and no date selected, return empty array
+  if (dashboardView === 'overall' && !selectedRegion && !selectedDate) {
+    return []
+  }
+  
+  // Use dashboard_metrics as primary source (pre-aggregated)
+  if (!dashboardMetrics.length) {
+    return []
+  }
+  
+  let filtered = dashboardMetrics
+  
+  // In Overall view with selectedRegion: filter hubs in that region
+  if (dashboardView === 'overall' && selectedRegion) {
+    filtered = filtered.filter(item => hubToRegionMap[item.hub] === selectedRegion)
+  }
+  // In Hub view with selectedHub: filter by specific hub
+  else if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
+    filtered = filtered.filter(item => item.hub === selectedHub)
+  }
+  
+  // Filter by date range (From/To dates take priority in Hub view)
+  if (dashboardView === 'hub' && hubFromDate && hubToDate) {
+    filtered = filtered.filter(item => {
+      const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
+      if (!itemDate) return false
+      return itemDate >= hubFromDate && itemDate <= hubToDate
+    })
+  } else if (selectedDate) {
+    // Fallback to single date - show last 7 days from selected date
+    const endDate = new Date(selectedDate)
+    const startDate = new Date(selectedDate)
+    startDate.setDate(endDate.getDate() - 7) // 7 days back
     
-    // For overall view: if no region and no date selected, return empty array
-    if (dashboardView === 'overall' && !selectedRegion && !selectedDate) {
-      return []
-    }
-    
-    // Use dashboard_metrics as primary source (pre-aggregated)
-    if (!dashboardMetrics.length) {
-      return []
-    }
-    
-    let filtered = dashboardMetrics
-    
-    // In Overall view with selectedRegion: filter hubs in that region
-    if (dashboardView === 'overall' && selectedRegion) {
-      filtered = filtered.filter(item => hubToRegionMap[item.hub] === selectedRegion)
-    }
-    // In Hub view with selectedHub: filter by specific hub
-    else if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
-      filtered = filtered.filter(item => item.hub === selectedHub)
-    }
-    
-    // Filter by date: show last 7 days from selected date
-    if (selectedDate) {
-      const endDate = new Date(selectedDate)
-      const startDate = new Date(selectedDate)
-      startDate.setDate(endDate.getDate() - 7) // 7 days back
-      
-      filtered = filtered.filter(item => {
-        const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
-        if (!itemDate) return false
-        const date = new Date(itemDate)
-        return date >= startDate && date <= endDate
-      })
-    }
-    
-    // Sort by date and format for chart
-    return filtered
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-      .map(item => ({
-        month: item.date?.slice(0, 10) || item.date, // Show YYYY-MM-DD
-        'Success Rate': Math.round((item.success_rate || 0) * 100),
-        'Riders': item.riders || 0,
-        'Delivered': item.delivered || 0,
-        'On-Hold': item.on_hold || 0,
-        'Productivity': Math.round(item.productivity || 0),
-        'Clear Floor Rate': Math.round(item.clear_floor_rate || 0),
-        'Scorecard': (item.scorecard || 0).toFixed(1)
-      }))
-  }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap])
-
-  // Normalize chart data for smooth animations - always uses "value" as dataKey
-  const normalizedChartData = useMemo(() => {
-    return filteredChartData.map(item => ({
-      month: item.month,
-      value: item[selectedCategory] || 0
+    filtered = filtered.filter(item => {
+      const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
+      if (!itemDate) return false
+      const date = new Date(itemDate)
+      return date >= startDate && date <= endDate
+    })
+  }
+  
+  // Sort by date and format for chart
+  return filtered
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .map(item => ({
+      month: item.date?.slice(0, 10) || item.date, // Show YYYY-MM-DD
+      'Success Rate': Math.round((item.success_rate || 0) * 100),
+      'Riders': item.riders || 0,
+      'Delivered': item.delivered || 0,
+      'On-Hold': item.on_hold || 0,
+      'Productivity': Math.round(item.productivity || 0),
+      'Clear Floor Rate': Math.round(item.clear_floor_rate || 0),
+      'Scorecard': (item.scorecard || 0).toFixed(1)
     }))
-  }, [filteredChartData, selectedCategory])
+  }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap, hubFromDate, hubToDate, selectedCategory])
 
   // Close hub dropdown when clicking outside
   useEffect(() => {
@@ -883,16 +938,25 @@ function Dashboard() {
       }
     }
 
-    // Calculate date range based on retentionView (MTD or L7D)
-    const endDate = selectedDate ? new Date(selectedDate) : new Date()
-    const startDate = new Date(endDate)
+    // Calculate date range based on hubFromDate/hubToDate or retentionView
+    let startDate, endDate
     
-    if (retentionView === 'MTD') {
-      // Month-to-Date: from 1st of month to selected date
-      startDate.setDate(1)
+    if (hubFromDate && hubToDate) {
+      // Use custom date range if set
+      startDate = new Date(hubFromDate)
+      endDate = new Date(hubToDate)
     } else {
-      // L7D: Last 7 days from selected date
-      startDate.setDate(endDate.getDate() - 7)
+      // Fallback to retentionView logic
+      endDate = selectedDate ? new Date(selectedDate) : new Date()
+      startDate = new Date(endDate)
+      
+      if (retentionView === 'MTD') {
+        // Month-to-Date: from 1st of month to selected date
+        startDate.setDate(1)
+      } else {
+        // L7D: Last 7 days from selected date
+        startDate.setDate(endDate.getDate() - 7)
+      }
     }
 
     // Filter riders who have activity within the date range
@@ -933,7 +997,7 @@ function Dashboard() {
       attritionRate,
       attritionRiders
     }
-  }, [ridersData, selectedHub, retentionView, selectedDate])
+  }, [ridersData, selectedHub, retentionView, selectedDate, hubFromDate, hubToDate])
 
   // Calculate P7D vs L7D comparison data for Overall view using REAL data
   const getComparisonData = useMemo(() => {
@@ -1060,10 +1124,17 @@ function Dashboard() {
       return []
     }
 
-    // Filter performance records by date
+    // Filter performance records by date range (From/To dates take priority over selectedDate)
     let filtered = performanceRecords
 
-    if (selectedDate) {
+    if (riderFromDate && riderToDate) {
+      // Use date range if both From and To are set
+      filtered = filtered.filter(p => {
+        const recordDate = p.date?.split('T')[0] || p.date
+        return recordDate >= riderFromDate && recordDate <= riderToDate
+      })
+    } else if (selectedDate) {
+      // Fallback to single date if no range is set
       filtered = filtered.filter(p => {
         const recordDate = p.date?.split('T')[0] || p.date
         return recordDate === selectedDate
@@ -1145,7 +1216,7 @@ function Dashboard() {
 
     // Sort by delivered descending
     return riders.sort((a, b) => b.delivered - a.delivered)
-  }, [ridersData, performanceRecords, selectedRider, selectedDate])
+  }, [ridersData, performanceRecords, selectedRider, selectedDate, riderFromDate, riderToDate])
 
   // Calculate Rider Level chart data for Delivery Trend
   const riderLevelChartData = useMemo(() => {
@@ -1162,12 +1233,25 @@ function Dashboard() {
     // Filter by selected rider
     filtered = filtered.filter(p => p.rider_id === selectedRider)
     
+    // Apply date range filter if From/To dates are set
+    if (riderFromDate && riderToDate) {
+      filtered = filtered.filter(p => {
+        const recordDate = p.date?.split('T')[0] || p.date
+        return recordDate >= riderFromDate && recordDate <= riderToDate
+      })
+    }
+    
     // Get unique dates from filtered records and sort them
     const uniqueDates = [...new Set(filtered.map(r => r.date?.split('T')[0] || r.date).filter(Boolean))].sort()
     
-    // Limit date range based on view (last N dates with data)
-    let dateLimit = riderTrendView === 'L7D' ? 7 : 30
-    const recentDates = uniqueDates.slice(-dateLimit)
+    // Limit date range based on view (last N dates with data) - only if no custom date range
+    let recentDates
+    if (riderFromDate && riderToDate) {
+      recentDates = uniqueDates // Use all dates within the custom range
+    } else {
+      let dateLimit = riderTrendView === 'L7D' ? 7 : 30
+      recentDates = uniqueDates.slice(-dateLimit)
+    }
     const dateSet = new Set(recentDates)
     
     filtered.forEach(record => {
@@ -1213,7 +1297,7 @@ function Dashboard() {
       .sort((a, b) => a.date.localeCompare(b.date))
     
     return result
-  }, [performanceRecords, selectedRider, riderTrendView, riderTrendMetric])
+  }, [performanceRecords, selectedRider, riderTrendView, riderTrendMetric, riderFromDate, riderToDate])
 
   // Handle export of filtered chart data to PDF
   const handleExport = useCallback(() => {
@@ -1251,9 +1335,11 @@ function Dashboard() {
       // Calculate date range for display
       let dateRangeStr = 'All Dates'
       
-      // For Hub Level: calculate L7D range (selected date - 7 days)
+      // For Hub Level: use From/To date range if set, otherwise calculate L7D range
       if (dashboardView === 'hub') {
-        if (selectedDate) {
+        if (hubFromDate && hubToDate) {
+          dateRangeStr = `${hubFromDate} to ${hubToDate}`
+        } else if (selectedDate) {
           const endDate = new Date(selectedDate)
           const startDate = new Date(selectedDate)
           startDate.setDate(endDate.getDate() - 7)
@@ -1261,9 +1347,11 @@ function Dashboard() {
           dateRangeStr = `${formatDate(startDate)} to ${formatDate(endDate)}`
         }
       } else if (dashboardView === 'rider' && selectedRider && riderLevelData.length > 0) {
-        const rider = riderLevelData[0]
-        if (rider.trend && rider.trend.length > 0) {
-          const dates = rider.trend.map(t => t.date).filter(d => d).sort()
+        // Use From/To date range if set, otherwise use data range
+        if (riderFromDate && riderToDate) {
+          dateRangeStr = `${riderFromDate} to ${riderToDate}`
+        } else if (riderLevelChartData && riderLevelChartData.length > 0) {
+          const dates = riderLevelChartData.map(d => d.date).filter(d => d).sort()
           dateRangeStr = `${dates[0]} to ${dates[dates.length - 1]}`
         } else if (selectedDate) {
           dateRangeStr = selectedDate
@@ -1650,8 +1738,16 @@ function Dashboard() {
               startY += 6
             })
 
-            // Daily trend data
-            if (rider.trend && rider.trend.length > 0) {
+            // Daily trend data - filter by date range
+            let trendData = rider.trend || []
+            if (riderFromDate && riderToDate && trendData.length > 0) {
+              trendData = trendData.filter(t => {
+                const trendDate = t.date?.split('T')[0] || t.date
+                return trendDate >= riderFromDate && trendDate <= riderToDate
+              })
+            }
+            
+            if (trendData.length > 0) {
               startY += 10
               pdf.setFillColor(168, 48, 48)
               pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
@@ -1666,7 +1762,7 @@ function Dashboard() {
               pdf.setFont(undefined, 'normal')
               pdf.setFontSize(8)
 
-              rider.trend.forEach((t, index) => {
+              trendData.forEach((t, index) => {
                 if (startY > 280) {
                   pdf.addPage()
                   startY = 15
@@ -1757,7 +1853,7 @@ function Dashboard() {
       console.error('Error exporting PDF:', error)
       alert('Failed to export PDF. Please try again.')
     }
-  }, [dashboardView, filteredChartData, filteredRidersNoRoute, riderLevelData, getComparisonData, filteredStats, kpiGradeData, retentionMetrics, selectedHub, selectedRegion, selectedRider, selectedDate])
+  }, [dashboardView, filteredChartData, filteredRidersNoRoute, riderLevelData, getComparisonData, filteredStats, kpiGradeData, retentionMetrics, selectedHub, selectedRegion, selectedRider, selectedDate, riderFromDate, riderToDate, riderLevelChartData])
 
   const COLORS = ['#a83030', '#c94c4c', '#e07e7e', '#f0b1b1', '#742a2a']
 
@@ -1875,12 +1971,27 @@ function Dashboard() {
             )}
           </div>
           
-          <input 
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
-          />
+          {/* From Date */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-slate-400">From:</span>
+            <input
+              type="date"
+              value={hubFromDate}
+              onChange={(e) => setHubFromDate(e.target.value)}
+              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+            />
+          </div>
+          
+          {/* To Date */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-slate-400">To:</span>
+            <input
+              type="date"
+              value={hubToDate}
+              onChange={(e) => setHubToDate(e.target.value)}
+              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+            />
+          </div>
           
           {/* Refresh Button */}
           <button
@@ -1943,6 +2054,28 @@ function Dashboard() {
                 )}
               </div>
             )}
+          </div>
+          
+          {/* From Date */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-slate-400">From:</span>
+            <input
+              type="date"
+              value={riderFromDate}
+              onChange={(e) => setRiderFromDate(e.target.value)}
+              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+            />
+          </div>
+          
+          {/* To Date */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-slate-400">To:</span>
+            <input
+              type="date"
+              value={riderToDate}
+              onChange={(e) => setRiderToDate(e.target.value)}
+              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+            />
           </div>
           
           {/* Refresh Button */}
@@ -2071,7 +2204,7 @@ function Dashboard() {
           </div>
           <ResponsiveContainer width="100%" height={320}>
             {filteredChartData.length > 0 ? (
-            <AreaChart data={normalizedChartData} layout="horizontal">
+            <AreaChart data={filteredChartData} layout="horizontal">
               <defs>
                 <linearGradient id="colorDeliveries" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#a83030" stopOpacity={0.3}/>
@@ -2110,7 +2243,7 @@ function Dashboard() {
               />
               <Area 
                 type="monotone" 
-                dataKey="value" 
+                dataKey={selectedCategory === 'All' ? 'Delivered' : selectedCategory}
                 stroke="#a83030" 
                 strokeWidth={2}
                 fillOpacity={1} 
