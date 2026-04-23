@@ -49,7 +49,7 @@ function Layout({ onLogout }) {
       {/* Sidebar - Dark Theme */}
       <aside className={`fixed top-0 left-0 h-full bg-slate-900 border-r border-slate-800 z-30 transform transition-all duration-300 ease-in-out ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-      } ${sidebarCollapsed ? 'w-20' : 'w-72'}`}>
+      } ${sidebarCollapsed ? 'w-20' : 'w-60'}`}>
         {/* Logo */}
         <div className={`border-b border-slate-800 ${sidebarCollapsed ? 'p-2' : 'p-4'}`}>
           <div className="flex items-center justify-between">
@@ -196,10 +196,10 @@ function Layout({ onLogout }) {
       </aside>
 
       {/* Main content */}
-      <main className={`${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-72'} min-h-screen bg-slate-900 transition-all duration-300`}>
+      <main className={`${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-60'} min-h-screen bg-slate-900 transition-all duration-300`}>
         {/* Header */}
         <header 
-          className="border-b border-slate-800/50 p-4 flex items-center justify-between z-[60] backdrop-blur-md h-28 w-full relative bg-slate-800/80"
+          className="border-b border-slate-800/50 p-4 flex items-center justify-between z-[60] backdrop-blur-md h-[111px] w-full relative bg-slate-800/80"
         >
           {/* Background image at 50% opacity */}
           <div 
