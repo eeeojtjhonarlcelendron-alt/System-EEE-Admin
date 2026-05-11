@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, FileDown, Plus, Pencil, Trash2, Calendar, Building2, MapPin } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { getPerformanceRecords, getPerformanceRecordsPaginated, batchInsertPerformanceRecords, deleteAllPerformanceRecords, updatePerformanceRecord, getPerformanceRecordByRiderAndDate, getPerformanceRecordsByDateRange, refreshRiders, deletePerformanceRecord, insertSinglePerformanceRecord, getRiders, syncRidersFromPerformance } from '../lib/data'
+import { SkeletonPerformance, ProgressBarLoader } from '../components/Skeleton'
 
 function parseDate(dateValue) {
   if (!dateValue) return null
@@ -61,6 +62,8 @@ function Performance() {
   const [data, setData] = useState([])
   const [filteredData, setFilteredData] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadingProgress, setLoadingProgress] = useState(0)
+  const [loadingStage, setLoadingStage] = useState('')
   const [totalCount, setTotalCount] = useState(0)
   const [showFilters, setShowFilters] = useState(false)
   const [filters, setFilters] = useState({
@@ -109,51 +112,78 @@ function Performance() {
   // Fetch all rider data on mount for client-side pagination
   useEffect(() => {
     async function fetchData() {
-      setLoading(true)
-      console.log('Fetching all riders and performance data...')
-      
-      // Fetch all riders from Rider table
-      const { data: riders, error: ridersError } = await getRiders()
-      // Fetch all performance records
-      const { data: records, error: recordsError } = await getPerformanceRecords()
-      
-      console.log('Fetch result:', { 
-        ridersCount: riders?.length, 
-        recordsCount: records?.length,
-        ridersError, 
-        recordsError 
-      })
-      
-      console.log('Setting data with', riders?.length || 0, 'riders,', records?.length || 0, 'records')
-      
-      // Create a map of rider data by rider_id
-      const riderMap = new Map()
-      if (riders) {
-        riders.forEach(rider => {
-          riderMap.set(rider.rider_id, rider)
+      try {
+        setLoading(true)
+        setLoadingProgress(0)
+        setLoadingStage('Initializing Performance data fetch...')
+        
+        // Create incremental progress function
+        const incrementProgress = async (startProgress, targetProgress, stageText, dataFetchFunction) => {
+          setLoadingStage(stageText)
+          const steps = targetProgress - startProgress
+          
+          // Increment by 1% at a time
+          for (let i = 1; i <= steps; i++) {
+            setLoadingProgress(startProgress + i)
+            await new Promise(resolve => setTimeout(resolve, 20)) // Small delay for visibility
+          }
+          
+          return await dataFetchFunction()
+        }
+        
+        let currentProgress = 0
+        
+        // Stage 1: Fetch riders (30%)
+        const { data: riders, error: ridersError } = await incrementProgress(currentProgress, 30, 'Loading rider information...', () => getRiders())
+        currentProgress = 30
+        
+        // Stage 2: Fetch performance records (60%)
+        const { data: records, error: recordsError } = await incrementProgress(currentProgress, 60, 'Loading performance records...', () => getPerformanceRecords())
+        currentProgress = 60
+        
+        // Stage 3: Process data (85%)
+        await incrementProgress(currentProgress, 85, 'Processing performance data...', async () => {
+          // Create a map of rider data by rider_id
+          const riderMap = new Map()
+          if (riders) {
+            riders.forEach(rider => {
+              riderMap.set(rider.rider_id, rider)
+            })
+          }
+          
+          // Create merged data from performance records
+          // Include all performance records, even if rider doesn't exist in riders table
+          const mergedData = []
+          if (records) {
+            records.forEach(record => {
+              const rider = riderMap.get(record.rider_id) || {}
+              mergedData.push({
+                ...record,
+                rider_name: rider.rider_name || record.driver_name,
+                operator_hub: rider.operator_hub || record.hub,
+                region: rider.region || record.region
+              })
+            })
+          }
+          
+          setData(mergedData)
+          setFilteredData(mergedData)
+          setTotalCount(mergedData.length)
+          setCurrentPage(1)
         })
+        currentProgress = 85
+        
+        // Final stage: Complete (100%)
+        setLoadingStage('Finalizing...')
+        for (let i = 86; i <= 100; i++) {
+          setLoadingProgress(i)
+          await new Promise(resolve => setTimeout(resolve, 20))
+        }
+      } catch (error) {
+        console.error('Error fetching Performance data:', error)
+      } finally {
+        setLoading(false)
       }
-      
-      // Create merged data from performance records
-      // Include all performance records, even if rider doesn't exist in riders table
-      const mergedData = []
-      if (records) {
-        records.forEach(record => {
-          const rider = riderMap.get(record.rider_id) || {}
-          mergedData.push({
-            ...record,
-            rider_name: rider.rider_name || record.driver_name,
-            operator_hub: rider.operator_hub || record.hub,
-            region: rider.region || record.region
-          })
-        })
-      }
-      
-      setData(mergedData)
-      setFilteredData(mergedData)
-      setTotalCount(mergedData.length)
-      setCurrentPage(1)
-      setLoading(false)
     }
     fetchData()
   }, [])
@@ -641,8 +671,11 @@ function Performance() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+      <div className="space-y-6 relative">
+        {/* Skeleton Loading Screen */}
+        <SkeletonPerformance />
+        {/* Progress Loader - Centered overlay */}
+        <ProgressBarLoader progress={loadingProgress} loadingStage={loadingStage} />
       </div>
     )
   }

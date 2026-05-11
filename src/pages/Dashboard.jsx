@@ -14,6 +14,13 @@ import {
   getClusterLeaders
 } from '../lib/data'
 import { 
+  SkeletonDashboard,
+  SkeletonStatsCard,
+  SkeletonChart,
+  SkeletonSpinner,
+  ProgressBarLoader
+} from '../components/Skeleton'
+import { 
   TrendingUp, 
   Users, 
   Target, 
@@ -177,6 +184,8 @@ function StatCard({ title, value, subtext, icon: Icon, trend, accentColor = 'bg-
 
 function Dashboard() {
   const [loading, setLoading] = useState(true)
+  const [loadingProgress, setLoadingProgress] = useState(0)
+  const [loadingStage, setLoadingStage] = useState('')
   const [stats, setStats] = useState({
     totalDeliveries: 0,
     successRate: 0,
@@ -201,7 +210,7 @@ function Dashboard() {
   const [riderSearchTerm, setRiderSearchTerm] = useState('')
   const [showRiderDropdown, setShowRiderDropdown] = useState(false)
   const [selectedCluster, setSelectedCluster] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState('All')
+  const [selectedCategory, setSelectedCategory] = useState('Success Rate')
   const [dashboardView, setDashboardView] = useState('hub') // 'hub', 'rider', or 'overall'
   const [selectedDate, setSelectedDate] = useState('') // empty by default
   const [clusterLeaders, setClusterLeaders] = useState([])
@@ -213,6 +222,8 @@ function Dashboard() {
   const [riderToDate, setRiderToDate] = useState('') // To date for Rider Level filter
   const [hubFromDate, setHubFromDate] = useState('') // From date for Hub Level filter
   const [hubToDate, setHubToDate] = useState('') // To date for Hub Level filter
+  const [hubDeliveryTrendTab, setHubDeliveryTrendTab] = useState('chart') // 'chart' or 'graph' for Hub Delivery Trend
+  const [riderDeliveryTrendTab, setRiderDeliveryTrendTab] = useState('chart') // 'chart' or 'graph' for Rider Delivery Trend
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
 
@@ -226,15 +237,55 @@ function Dashboard() {
     async function fetchData() {
       try {
         setLoading(true)
+        setLoadingProgress(0)
+        setLoadingStage('Initializing data fetch...')
         
-        const [statsResult, hubResult, performanceResult, kpiResult, dashboardResult, ridersResult] = await Promise.all([
-          getDashboardStats(),
-          getRiderHubStats(),
-          getPerformanceRecords(), // Now optimized to load all data efficiently
-          getKpiRecords(), // Now optimized to load all data efficiently
-          getDashboardMetrics(),
-          getRiders()
-        ])
+        // Create incremental progress function
+        const incrementProgress = async (startProgress, targetProgress, stageText, dataFetchFunction) => {
+          setLoadingStage(stageText)
+          const steps = targetProgress - startProgress
+          
+          // Increment by 1% at a time
+          for (let i = 1; i <= steps; i++) {
+            setLoadingProgress(startProgress + i)
+            await new Promise(resolve => setTimeout(resolve, 20)) // Small delay for visibility
+          }
+          
+          return await dataFetchFunction()
+        }
+        
+        let currentProgress = 0
+        
+        // Stage 1: Fetch basic stats (15%)
+        const statsResult = await incrementProgress(currentProgress, 15, 'Fetching dashboard statistics...', () => getDashboardStats())
+        currentProgress = 15
+        
+        // Stage 2: Fetch hub stats (30%)
+        const hubResult = await incrementProgress(currentProgress, 30, 'Fetching hub performance data...', () => getRiderHubStats())
+        currentProgress = 30
+        
+        // Stage 3: Fetch performance records (50%)
+        const performanceResult = await incrementProgress(currentProgress, 50, 'Loading performance records...', () => getPerformanceRecords())
+        currentProgress = 50
+        
+        // Stage 4: Fetch KPI records (70%)
+        const kpiResult = await incrementProgress(currentProgress, 70, 'Loading KPI data...', () => getKpiRecords())
+        currentProgress = 70
+        
+        // Stage 5: Fetch dashboard metrics (85%)
+        const dashboardResult = await incrementProgress(currentProgress, 85, 'Fetching dashboard metrics...', () => getDashboardMetrics())
+        currentProgress = 85
+        
+        // Stage 6: Fetch riders data (95%)
+        const ridersResult = await incrementProgress(currentProgress, 95, 'Loading rider information...', () => getRiders())
+        currentProgress = 95
+        
+        // Final stage: Processing (100%)
+        setLoadingStage('Processing data...')
+        for (let i = 96; i <= 100; i++) {
+          setLoadingProgress(i)
+          await new Promise(resolve => setTimeout(resolve, 20))
+        }
 
         if (statsResult.data) {
           setStats(statsResult.data)
@@ -2294,8 +2345,11 @@ const filteredChartData = useMemo(() => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <Loader2 className="w-10 h-10 animate-spin text-maroon-500" />
+      <div className="space-y-4 relative">
+        {/* Skeleton Loading Screen */}
+        <SkeletonDashboard />
+        {/* Progress Loader - Centered overlay */}
+        <ProgressBarLoader progress={loadingProgress} loadingStage={loadingStage} />
       </div>
     )
   }
@@ -2637,6 +2691,29 @@ const filteredChartData = useMemo(() => {
               <h3 className="text-sm font-semibold text-white tracking-wide">Delivery Trend</h3>
             </div>
             <div className="flex items-center gap-2">
+              {/* Tabs */}
+              <div className="flex bg-slate-700/50 rounded-lg p-1">
+                <button
+                  onClick={() => setHubDeliveryTrendTab('chart')}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                    hubDeliveryTrendTab === 'chart'
+                      ? 'bg-maroon-500 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Chart
+                </button>
+                <button
+                  onClick={() => setHubDeliveryTrendTab('graph')}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                    hubDeliveryTrendTab === 'graph'
+                      ? 'bg-maroon-500 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Graph
+                </button>
+              </div>
               {/* Category Filter */}
               <select 
                 value={selectedCategory}
@@ -2655,55 +2732,104 @@ const filteredChartData = useMemo(() => {
           </div>
           <ResponsiveContainer width="100%" height={320}>
             {filteredChartData.length > 0 ? (
-            <AreaChart key={filteredChartData.length} data={filteredChartData} layout="horizontal">
-              <defs>
-                <linearGradient id="colorDeliveries" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#a83030" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#a83030" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
-              <XAxis 
-                dataKey="month" 
-                stroke="#94a3b8" 
-                fontSize={8} 
-                tickLine={false} 
-                axisLine={false}
-                interval={filteredChartData.length > 6 ? Math.floor(filteredChartData.length / 5) : 0}
-                angle={-45}
-                textAnchor="end"
-                height={60}
-              />
-              <YAxis 
-                stroke="#94a3b8" 
-                fontSize={9} 
-                tickLine={false} 
-                axisLine={false} 
-                width={40}
-                domain={['Success Rate', 'Productivity', 'Clear Floor Rate', 'Scorecard'].includes(selectedCategory) ? [0, 100] : [0, 'auto']}
-              />
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: '#1e293b', 
-                  border: '1px solid #334155', 
-                  borderRadius: '6px',
-                  color: '#fff',
-                  fontSize: '11px',
-                  boxShadow: '0 0 20px rgba(0,0,0,0.5)'
-                }} 
-              />
-              <Area 
-                type="monotone" 
-                dataKey={selectedCategory === 'All' ? 'Delivered' : selectedCategory}
-                stroke="#a83030" 
-                strokeWidth={2}
-                fillOpacity={1} 
-                fill="url(#colorDeliveries)"
-                animationDuration={800}
-                animationEasing="ease-in-out"
-                isAnimationActive={true}
-              />
-            </AreaChart>
+              hubDeliveryTrendTab === 'chart' ? (
+                <AreaChart key={filteredChartData.length} data={filteredChartData} layout="horizontal">
+                  <defs>
+                    <linearGradient id="colorDeliveries" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#a83030" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#a83030" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                  <XAxis 
+                    dataKey="month" 
+                    stroke="#94a3b8" 
+                    fontSize={6} 
+                    tickLine={false} 
+                    axisLine={false}
+                    interval={0}
+                    angle={-45}
+                    textAnchor="end"
+                    height={80}
+                  />
+                  <YAxis 
+                    stroke="#94a3b8" 
+                    fontSize={9} 
+                    tickLine={false} 
+                    axisLine={false} 
+                    width={40}
+                    domain={['Success Rate', 'Productivity', 'Clear Floor Rate', 'Scorecard'].includes(selectedCategory) ? [0, 100] : [0, 'auto']}
+                  />
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: '#1e293b', 
+                      border: '1px solid #334155', 
+                      borderRadius: '6px',
+                      color: '#fff',
+                      fontSize: '11px',
+                      boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                    }} 
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey={selectedCategory}
+                    stroke="#a83030" 
+                    strokeWidth={2}
+                    fillOpacity={1} 
+                    fill="url(#colorDeliveries)"
+                    animationDuration={800}
+                    animationEasing="ease-in-out"
+                    isAnimationActive={true}
+                  />
+                </AreaChart>
+              ) : (
+                <BarChart key={filteredChartData.length} data={filteredChartData}>
+                  <defs>
+                    <linearGradient id="colorBar" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#a83030" stopOpacity={0.8}/>
+                      <stop offset="95%" stopColor="#a83030" stopOpacity={0.4}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                  <XAxis 
+                    dataKey="month" 
+                    stroke="#94a3b8" 
+                    fontSize={6} 
+                    tickLine={false} 
+                    axisLine={false}
+                    interval={0}
+                    angle={-45}
+                    textAnchor="end"
+                    height={80}
+                  />
+                  <YAxis 
+                    stroke="#94a3b8" 
+                    fontSize={9} 
+                    tickLine={false} 
+                    axisLine={false} 
+                    width={40}
+                    domain={['Success Rate', 'Productivity', 'Clear Floor Rate', 'Scorecard'].includes(selectedCategory) ? [0, 100] : [0, 'auto']}
+                  />
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: '#1e293b', 
+                      border: '1px solid #334155', 
+                      borderRadius: '6px',
+                      color: '#fff',
+                      fontSize: '11px',
+                      boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                    }} 
+                  />
+                  <Bar 
+                    dataKey={selectedCategory}
+                    fill="url(#colorBar)"
+                    animationDuration={800}
+                    animationEasing="ease-in-out"
+                    isAnimationActive={true}
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              )
             ) : (
               <div className="flex items-center justify-center h-full">
                 <span className="text-slate-400 text-sm">
@@ -2941,10 +3067,35 @@ const filteredChartData = useMemo(() => {
         {/* Delivery Trend Chart - Only show Riders Information when a rider is selected */}
         <div className="bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-maroon-500" />
-              Delivery Trend
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-maroon-500" />
+                Delivery Trend
+              </h3>
+              {/* Tabs */}
+              <div className="flex bg-slate-700/50 rounded-lg p-1">
+                <button
+                  onClick={() => setRiderDeliveryTrendTab('chart')}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                    riderDeliveryTrendTab === 'chart'
+                      ? 'bg-maroon-500 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Chart
+                </button>
+                <button
+                  onClick={() => setRiderDeliveryTrendTab('graph')}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                    riderDeliveryTrendTab === 'graph'
+                      ? 'bg-maroon-500 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Graph
+                </button>
+              </div>
+            </div>
             <div className="flex items-center gap-2">
               {/* Metric Filter */}
               <div className="flex gap-1">
@@ -3028,45 +3179,84 @@ const filteredChartData = useMemo(() => {
           <div className="h-48">
             {riderLevelChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={riderLevelChartData}>
-                  <defs>
-                    <linearGradient id="riderDeliveredGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'} stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'} stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                  <XAxis 
-                    dataKey="date" 
-                    stroke="#64748b"
-                    fontSize={10}
-                    tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  />
-                  <YAxis stroke="#64748b" fontSize={10} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#1e293b', 
-                      border: '1px solid #475569',
-                      borderRadius: '6px',
-                      fontSize: '12px'
-                    }}
-                    labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                    formatter={(value) => {
-                      if (riderTrendMetric === 'successRate') {
-                        return [`${value.toFixed(1)}%`, 'Success Rate']
-                      }
-                      return [value, riderTrendMetric]
-                    }}
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="value"
-                    stroke={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'}
-                    strokeWidth={2}
-                    fillOpacity={1} 
-                    fill="url(#riderDeliveredGradient)" 
-                  />
-                </AreaChart>
+                {riderDeliveryTrendTab === 'chart' ? (
+                  <AreaChart data={riderLevelChartData}>
+                    <defs>
+                      <linearGradient id="riderDeliveredGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'} stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'} stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis 
+                      dataKey="date" 
+                      stroke="#64748b"
+                      fontSize={10}
+                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    />
+                    <YAxis stroke="#64748b" fontSize={10} />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: '#1e293b', 
+                        border: '1px solid #475569',
+                        borderRadius: '6px',
+                        fontSize: '12px'
+                      }}
+                      labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                      formatter={(value) => {
+                        if (riderTrendMetric === 'successRate') {
+                          return [`${value.toFixed(1)}%`, 'Success Rate']
+                        }
+                        return [value, riderTrendMetric]
+                      }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="value"
+                      stroke={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'}
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#riderDeliveredGradient)" 
+                    />
+                  </AreaChart>
+                ) : (
+                  <BarChart data={riderLevelChartData}>
+                    <defs>
+                      <linearGradient id="riderBarGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'} stopOpacity={0.8}/>
+                        <stop offset="95%" stopColor={riderTrendMetric === 'successRate' ? '#3b82f6' : riderTrendMetric === 'onHold' ? '#f59e0b' : riderTrendMetric === 'productivity' ? '#a855f7' : '#10b981'} stopOpacity={0.4}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis 
+                      dataKey="date" 
+                      stroke="#64748b"
+                      fontSize={10}
+                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    />
+                    <YAxis stroke="#64748b" fontSize={10} />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: '#1e293b', 
+                        border: '1px solid #475569',
+                        borderRadius: '6px',
+                        fontSize: '12px'
+                      }}
+                      labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                      formatter={(value) => {
+                        if (riderTrendMetric === 'successRate') {
+                          return [`${value.toFixed(1)}%`, 'Success Rate']
+                        }
+                        return [value, riderTrendMetric]
+                      }}
+                    />
+                    <Bar 
+                      dataKey="value"
+                      fill="url(#riderBarGradient)"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                )}
               </ResponsiveContainer>
             ) : (
               <div className="flex items-center justify-center h-full text-slate-400 text-sm">
@@ -3094,11 +3284,11 @@ const filteredChartData = useMemo(() => {
               <h3 className="text-sm font-semibold text-white">AVG KPI</h3>
               <div className="flex items-center gap-3 text-xs">
                 <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-blue-500 rounded"></div>
+                  <div className="w-3 h-3 bg-[#a83030] rounded"></div>
                   <span className="text-slate-300">P7D</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-red-500 rounded"></div>
+                  <div className="w-3 h-3 bg-[#eb6262] rounded"></div>
                   <span className="text-slate-300">L7D</span>
                 </div>
               </div>
@@ -3131,10 +3321,10 @@ const filteredChartData = useMemo(() => {
                   }}
                   formatter={(value) => [`${value}%`, '']}
                 />
-                <Bar dataKey="kpiP7D" fill="#3b82f6" name="P7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="kpiP7D" fill="#a83030" name="P7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="kpiP7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
                 </Bar>
-                <Bar dataKey="kpiL7D" fill="#ef4444" name="L7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="kpiL7D" fill="#eb6262" name="L7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="kpiL7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
                 </Bar>
               </BarChart>
@@ -3147,11 +3337,11 @@ const filteredChartData = useMemo(() => {
               <h3 className="text-sm font-semibold text-white">CLEAR FLOOR RATE</h3>
               <div className="flex items-center gap-3 text-xs">
                 <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-blue-500 rounded"></div>
+                  <div className="w-3 h-3 bg-[#a83030] rounded"></div>
                   <span className="text-slate-300">P7D</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-red-500 rounded"></div>
+                  <div className="w-3 h-3 bg-[#eb6262] rounded"></div>
                   <span className="text-slate-300">L7D</span>
                 </div>
               </div>
@@ -3184,10 +3374,10 @@ const filteredChartData = useMemo(() => {
                   }}
                   formatter={(value) => [`${value}%`, '']}
                 />
-                <Bar dataKey="cfrP7D" fill="#3b82f6" name="P7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="cfrP7D" fill="#a83030" name="P7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="cfrP7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
                 </Bar>
-                <Bar dataKey="cfrL7D" fill="#ef4444" name="L7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="cfrL7D" fill="#eb6262" name="L7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="cfrL7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
                 </Bar>
               </BarChart>
@@ -3200,11 +3390,11 @@ const filteredChartData = useMemo(() => {
               <h3 className="text-sm font-semibold text-white">SUCCESS RATE</h3>
               <div className="flex items-center gap-3 text-xs">
                 <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-blue-500 rounded"></div>
+                  <div className="w-3 h-3 bg-[#a83030] rounded"></div>
                   <span className="text-slate-300">P7D</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-red-500 rounded"></div>
+                  <div className="w-3 h-3 bg-[#eb6262] rounded"></div>
                   <span className="text-slate-300">L7D</span>
                 </div>
               </div>
@@ -3237,10 +3427,10 @@ const filteredChartData = useMemo(() => {
                   }}
                   formatter={(value) => [`${value}%`, '']}
                 />
-                <Bar dataKey="srP7D" fill="#3b82f6" name="P7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="srP7D" fill="#a83030" name="P7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="srP7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
                 </Bar>
-                <Bar dataKey="srL7D" fill="#ef4444" name="L7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="srL7D" fill="#eb6262" name="L7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="srL7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
                 </Bar>
               </BarChart>
@@ -3253,11 +3443,11 @@ const filteredChartData = useMemo(() => {
               <h3 className="text-sm font-semibold text-white">PRODUCTIVITY</h3>
               <div className="flex items-center gap-3 text-xs">
                 <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-blue-500 rounded"></div>
+                  <div className="w-3 h-3 bg-[#a83030] rounded"></div>
                   <span className="text-slate-300">P7D</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-red-500 rounded"></div>
+                  <div className="w-3 h-3 bg-[#eb6262] rounded"></div>
                   <span className="text-slate-300">L7D</span>
                 </div>
               </div>
@@ -3290,10 +3480,10 @@ const filteredChartData = useMemo(() => {
                   }}
                   formatter={(value) => [`${value}%`, '']}
                 />
-                <Bar dataKey="prodP7D" fill="#3b82f6" name="P7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="prodP7D" fill="#a83030" name="P7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="prodP7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
                 </Bar>
-                <Bar dataKey="prodL7D" fill="#ef4444" name="L7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="prodL7D" fill="#eb6262" name="L7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="prodL7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
                 </Bar>
               </BarChart>
@@ -3302,16 +3492,16 @@ const filteredChartData = useMemo(() => {
         </div>
 
         {/* Loss Chart */}
-        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+        <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50">
           <div className="flex items-center justify-between mb-4">
             <h4 className="text-sm font-medium text-slate-300">Loss </h4>
             <div className="flex gap-3 text-xs">
-              <span className="flex items-center gap-1 text-blue-400">
-                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+              <span className="flex items-center gap-1 text-[#a83030]">
+                <span className="w-3 h-3 bg-[#a83030] rounded"></span>
                 P7D
               </span>
-              <span className="flex items-center gap-1 text-red-400">
-                <span className="w-2 h-2 rounded-full bg-red-500"></span>
+              <span className="flex items-center gap-1 text-[#eb6262]">
+                <span className="w-3 h-3 bg-[#eb6262] rounded"></span>
                 L7D
               </span>
             </div>
@@ -3340,10 +3530,10 @@ const filteredChartData = useMemo(() => {
                     fontSize: '12px'
                   }}
                 />
-                <Bar dataKey="lossP7D" fill="#3b82f6" name="P7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="lossP7D" fill="#a83030" name="P7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="lossP7D" position="top" fill="#fff" fontSize={10} />
                 </Bar>
-                <Bar dataKey="lossL7D" fill="#ef4444" name="L7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="lossL7D" fill="#eb6262" name="L7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="lossL7D" position="top" fill="#fff" fontSize={10} />
                 </Bar>
               </BarChart>
@@ -3352,16 +3542,16 @@ const filteredChartData = useMemo(() => {
         </div>
 
         {/* Rider Count Chart */}
-        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+        <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50">
           <div className="flex items-center justify-between mb-4">
             <h4 className="text-sm font-medium text-slate-300">Rider Count </h4>
             <div className="flex gap-3 text-xs">
-              <span className="flex items-center gap-1 text-blue-400">
-                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+              <span className="flex items-center gap-1 text-[#a83030]">
+                <span className="w-3 h-3 bg-[#a83030] rounded"></span>
                 P7D
               </span>
-              <span className="flex items-center gap-1 text-emerald-400">
-                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span className="flex items-center gap-1 text-[#eb6262]">
+                <span className="w-3 h-3 bg-[#eb6262] rounded"></span>
                 L7D
               </span>
             </div>
@@ -3390,10 +3580,10 @@ const filteredChartData = useMemo(() => {
                     fontSize: '12px'
                   }}
                 />
-                <Bar dataKey="ridersP7D" fill="#3b82f6" name="P7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="ridersP7D" fill="#a83030" name="P7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="ridersP7D" position="top" fill="#fff" fontSize={10} />
                 </Bar>
-                <Bar dataKey="ridersL7D" fill="#10b981" name="L7D" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="ridersL7D" fill="#eb6262" name="L7D" radius={[4, 4, 0, 0]}>
                   <LabelList dataKey="ridersL7D" position="top" fill="#fff" fontSize={10} />
                 </Bar>
               </BarChart>
