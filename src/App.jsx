@@ -6,6 +6,7 @@ import Layout from './components/Layout'
 import Performance from './pages/Performance'
 import KPI from './pages/KPI'
 import Rider from './pages/Rider'
+import Clustering from './pages/Clustering'
 
 function AppRoutes() {
   const { user, loading, signOut } = useAuth()
@@ -41,6 +42,7 @@ function AppRoutes() {
         <Route path="data-management/performance" element={<Performance />} />
         <Route path="data-management/kpi" element={<KPI />} />
         <Route path="data-management/rider" element={<Rider />} />
+        <Route path="data-management/clustering" element={<Clustering />} />
       </Route>
     </Routes>
   )

@@ -107,21 +107,29 @@ export async function getPerformanceRecordsPaginated(page = 0, pageSize = 100, f
   return { data: data || [], error, totalCount: count || 0 }
 }
 
-// Fetch all records (for export) - use sparingly
+// Fetch all records (for export) - batch approach for reliability
 export async function getPerformanceRecords(filters = {}) {
+  console.log('getPerformanceRecords: Starting batch fetch...')
+  
+  // First get total count
+  const { count: totalCount } = await supabase
+    .from('performance_records')
+    .select('*', { count: 'exact' })
+  
+  console.log(`Total records in database: ${totalCount}`)
+  
+  // Fetch in batches to ensure all records are loaded
+  const batchSize = 5000
   const allData = []
-  let page = 0
-  const pageSize = 1000
+  let offset = 0
   let hasMore = true
-
-  console.log('getPerformanceRecords: Starting fetch...')
-
-  while (hasMore) {
+  
+  while (hasMore && offset < totalCount) {
     let query = supabase
       .from('performance_records')
       .select('*')
-      .range(page * pageSize, (page + 1) * pageSize - 1)
-      .order('created_at', { ascending: false })
+      .order('date', { ascending: false })
+      .range(offset, offset + batchSize - 1)
     
     if (filters.hub) {
       query = query.eq('hub', filters.hub)
@@ -132,17 +140,15 @@ export async function getPerformanceRecords(filters = {}) {
 
     const { data, error } = await query
     
-    console.log(`getPerformanceRecords: Page ${page}, fetched ${data?.length || 0} records, error:`, error)
-    
     if (error) {
       return { data: allData, error }
     }
     
     if (data && data.length > 0) {
       allData.push(...data)
-      page++
-      hasMore = data.length === pageSize
-      console.log(`getPerformanceRecords: Total so far: ${allData.length}, hasMore: ${hasMore}`)
+      offset += data.length
+      hasMore = offset < totalCount
+      console.log(`Batch ${Math.floor(offset/batchSize) + 1}: Fetched ${data.length} records, total so far: ${allData.length}`)
     } else {
       hasMore = false
     }
@@ -150,6 +156,32 @@ export async function getPerformanceRecords(filters = {}) {
 
   console.log(`getPerformanceRecords: Finished with ${allData.length} total records`)
   return { data: allData, error: null }
+}
+
+// Optimized function to fetch only recent performance data for dashboard
+export async function getRecentPerformanceRecords(days = 30, filters = {}) {
+  console.log(`getRecentPerformanceRecords: Fetching last ${days} days...`)
+  
+  const daysAgo = new Date()
+  daysAgo.setDate(daysAgo.getDate() - days)
+  
+  let query = supabase
+    .from('performance_records')
+    .select('*')
+    .gte('date', daysAgo.toISOString().split('T')[0])
+    .order('date', { ascending: false })
+  
+  if (filters.hub) {
+    query = query.eq('hub', filters.hub)
+  }
+  if (filters.hubs && filters.hubs.length > 0) {
+    query = query.in('hub', filters.hubs)
+  }
+  
+  const { data, error } = await query
+  
+  console.log(`getRecentPerformanceRecords: Finished with ${data?.length || 0} records`)
+  return { data: data || [], error }
 }
 
 export async function createPerformanceRecord(record) {
@@ -203,7 +235,12 @@ export async function deleteAllPerformanceRecords() {
 
 // KPI records CRUD
 export async function getKpiRecords(filters = {}) {
-  let query = supabase.from('kpi_records').select('*')
+  console.log('getKpiRecords: Starting optimized fetch...')
+  
+  let query = supabase
+    .from('kpi_records')
+    .select('*')
+    .order('date', { ascending: false })
   
   if (filters.region) {
     query = query.eq('region', filters.region)
@@ -218,7 +255,44 @@ export async function getKpiRecords(filters = {}) {
     query = query.or(`region.ilike.%${filters.search}%,operator_hub.ilike.%${filters.search}%`)
   }
 
-  const { data, error } = await query.order('date', { ascending: false })
+  const { data, error } = await query
+  
+  console.log(`getKpiRecords: Finished with ${data?.length || 0} records`)
+  return { data: data || [], error }
+}
+
+// Optimized function to fetch only recent KPI data for dashboard
+export async function getRecentKpiRecords(days = 30, filters = {}) {
+  console.log(`getRecentKpiRecords: Fetching last ${days} days...`)
+  
+  const daysAgo = new Date()
+  daysAgo.setDate(daysAgo.getDate() - days)
+  
+  let query = supabase
+    .from('kpi_records')
+    .select('*')
+    .gte('date', daysAgo.toISOString().split('T')[0])
+    .order('date', { ascending: false })
+  
+  if (filters.region) {
+    query = query.eq('region', filters.region)
+  }
+  if (filters.operator_hub) {
+    query = query.eq('operator_hub', filters.operator_hub)
+  }
+  if (filters.hubs && filters.hubs.length > 0) {
+    query = query.in('operator_hub', filters.hubs)
+  }
+  if (filters.grade) {
+    query = query.eq('grade', filters.grade)
+  }
+  if (filters.search) {
+    query = query.or(`region.ilike.%${filters.search}%,operator_hub.ilike.%${filters.search}%`)
+  }
+  
+  const { data, error } = await query
+  
+  console.log(`getRecentKpiRecords: Finished with ${data?.length || 0} records`)
   return { data: data || [], error }
 }
 
@@ -317,7 +391,7 @@ export async function syncRidersFromPerformance() {
   // Get all performance records
   const { data: records, error: fetchError } = await supabase
     .from('performance_records')
-    .select('rider_id, driver_name, hub, region')
+    .select('rider_id, driver_name, hub')
   
   if (fetchError || !records) {
     return { error: fetchError }
@@ -328,7 +402,6 @@ export async function syncRidersFromPerformance() {
     rider_id: r.rider_id,
     rider_name: r.driver_name,
     operator_hub: r.hub,
-    region: r.region,
     status: 'Active'
   }])).values()]
   
@@ -361,21 +434,120 @@ export async function getUniqueRiders() {
     .rpc('get_unique_riders')
   return { data: data || [], error }
 }
-export async function batchInsertKpiRecords(records) {
-  const { data, error } = await supabase
-    .from('kpi_records')
-    .insert(records)
-    .select()
-  return { data, error }
+export async function batchInsertKpiRecords(records, onProgress) {
+  // Single record processing to avoid database deadlocks
+  const allInserted = []
+  const failedRecords = []
+  
+  // Process one record at a time to prevent database conflicts
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i]
+    let retries = 0
+    const maxRetries = 3
+    let success = false
+    let lastError = null
+    
+    while (retries < maxRetries && !success) {
+      const { error } = await supabase
+        .from('kpi_records')
+        .insert([record]) // Insert single record
+      
+      if (!error) {
+        allInserted.push(record)
+        success = true
+      } else {
+        lastError = error
+        // If deadlock or timeout, wait a bit before retry
+        if (error.code === '40P01' || error.code === '57014') {
+          await new Promise(resolve => setTimeout(resolve, 10)) // Brief pause
+        }
+        retries++
+      }
+    }
+    
+    if (!success) {
+      failedRecords.push({ record, error: lastError })
+    }
+    
+    // Report progress every record
+    if (onProgress) {
+      onProgress({
+        current: i + 1,
+        total: records.length,
+        status: `Importing ${i + 1} of ${records.length}...`
+      })
+    }
+    
+    // No delay to prevent overwhelming the database
+    if (i % 50 === 0 && i > 0) {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+  }
+  
+  if (failedRecords.length > 0) {
+    console.log(`${failedRecords.length} records failed to import`)
+    return { data: allInserted, error: { message: `${failedRecords.length} records failed`, failedRecords } }
+  }
+  
+  return { data: allInserted, error: null }
 }
 
-export async function batchInsertPerformanceRecords(records) {
-  // Try upsert to handle conflicts automatically
-  const { data, error } = await supabase
-    .from('performance_records')
-    .upsert(records, { onConflict: 'rider_id,date' })
-    .select()
-  return { data, error }
+export async function batchInsertPerformanceRecords(records, onProgress) {
+  // Single record processing to avoid database deadlocks
+  const allInserted = []
+  const failedRecords = []
+  
+  // Process one record at a time to prevent database conflicts
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i]
+    let retries = 0
+    const maxRetries = 3
+    let success = false
+    let lastError = null
+    
+    while (retries < maxRetries && !success) {
+      const { error } = await supabase
+        .from('performance_records')
+        .insert([record]) // Insert single record
+      
+      if (!error) {
+        allInserted.push(record)
+        success = true
+      } else {
+        lastError = error
+        // If deadlock or timeout, wait a bit before retry
+        if (error.code === '40P01' || error.code === '57014') {
+          await new Promise(resolve => setTimeout(resolve, 10)) // Brief pause
+        }
+        retries++
+      }
+    }
+    
+    if (!success) {
+      failedRecords.push({ record, error: lastError })
+    }
+    
+    // Report progress every record
+    if (onProgress) {
+      onProgress({
+        current: i + 1,
+        total: records.length,
+        status: `Importing ${i + 1} of ${records.length}...`
+      })
+    }
+    
+    // No delay to prevent overwhelming the database
+    if (i % 50 === 0 && i > 0) {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+  }
+  
+  if (failedRecords.length > 0) {
+    console.log(`${failedRecords.length} records failed to import`)
+    return { data: allInserted, error: { message: `${failedRecords.length} records failed`, failedRecords } }
+  }
+  
+  return { data: allInserted, error: null }
 }
 
 export async function insertSinglePerformanceRecord(record) {
@@ -385,4 +557,152 @@ export async function insertSinglePerformanceRecord(record) {
     .select()
   // Return first item if found
   return { data: data && data.length > 0 ? data[0] : null, error }
+}
+
+// Cluster Leaders CRUD
+export async function getClusterLeaders() {
+  try {
+    const { data, error } = await supabase
+      .from('cluster_leaders')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    // If table doesn't exist, return empty array
+    if (error && error.code === 'PGRST116') {
+      return { data: [], error: null }
+    }
+    
+    return { data: data || [], error }
+  } catch (err) {
+    return { data: [], error: err }
+  }
+}
+
+export async function createClusterLeader(record) {
+  const { data, error } = await supabase
+    .from('cluster_leaders')
+    .insert([record])
+    .select()
+  return { data: data?.[0], error }
+}
+
+export async function updateClusterLeader(id, updates) {
+  const { data, error } = await supabase
+    .from('cluster_leaders')
+    .update(updates)
+    .eq('id', id)
+    .select()
+  return { data: data?.[0], error }
+}
+
+export async function deleteClusterLeader(id) {
+  const { error } = await supabase
+    .from('cluster_leaders')
+    .delete()
+    .eq('id', id)
+  return { error }
+}
+
+// Get unique hubs from performance records efficiently
+export async function getUniqueHubs() {
+  const { data, error } = await supabase
+    .from('performance_records')
+    .select('hub')
+    .not('hub', 'is', null)
+    .not('hub', 'eq', '')
+    .order('hub')
+  
+  if (error) {
+    console.error('getUniqueHubs error:', error)
+    return { data: [], error }
+  }
+  
+  // Extract unique hubs
+  const uniqueHubs = [...new Set(data?.map(item => item.hub).filter(Boolean) || [])]
+  return { data: uniqueHubs, error }
+}
+
+// Sync cluster names to KPI records based on hub assignments
+export async function syncClusterToKpiRecords(leaderName, hubs) {
+  if (!hubs || hubs.length === 0) return { error: null, count: 0 }
+
+  let totalCount = 0
+  let lastError = null
+
+  // Process hubs in batches of 2 to avoid timeout
+  const batchSize = 2
+  for (let i = 0; i < hubs.length; i += batchSize) {
+    const batch = hubs.slice(i, i + batchSize)
+    
+    try {
+      const { data, error, count } = await supabase
+        .from('kpi_records')
+        .update({ cluster: leaderName })
+        .in('operator_hub', batch)
+        .select('id', { count: 'exact' })
+
+      if (error) {
+        console.error(`Sync error for batch ${i}-${i + batchSize}:`, error)
+        lastError = error
+      } else {
+        totalCount += count || 0
+        console.log(`Synced batch ${i}-${i + batchSize}: ${count || 0} records`)
+      }
+    } catch (err) {
+      console.error(`Sync error for batch ${i}-${i + batchSize}:`, err)
+      lastError = err
+    }
+  }
+
+  console.log(`Synced cluster "${leaderName}" to ${totalCount} total KPI records for hubs:`, hubs)
+  return { error: lastError, count: totalCount }
+}
+
+// Clear cluster name from KPI records for specific hubs
+export async function clearClusterFromKpiRecords(hubs) {
+  if (!hubs || hubs.length === 0) return { error: null }
+
+  let lastError = null
+
+  // Process hubs in batches of 2 to avoid timeout
+  const batchSize = 2
+  for (let i = 0; i < hubs.length; i += batchSize) {
+    const batch = hubs.slice(i, i + batchSize)
+    
+    try {
+      const { error } = await supabase
+        .from('kpi_records')
+        .update({ cluster: '' })
+        .in('operator_hub', batch)
+
+      if (error) {
+        console.error(`Clear error for batch ${i}-${i + batchSize}:`, error)
+        lastError = error
+      }
+    } catch (err) {
+      console.error(`Clear error for batch ${i}-${i + batchSize}:`, err)
+      lastError = err
+    }
+  }
+
+  return { error: lastError }
+}
+
+// Check which hubs exist in KPI records
+export async function checkHubsInKpiRecords(hubs) {
+  if (!hubs || hubs.length === 0) return { found: [], notFound: [] }
+
+  const { data, error } = await supabase
+    .from('kpi_records')
+    .select('operator_hub')
+    .in('operator_hub', hubs)
+
+  if (error) {
+    return { found: [], notFound: hubs, error }
+  }
+
+  const foundHubs = [...new Set(data?.map(r => r.operator_hub) || [])]
+  const notFoundHubs = hubs.filter(hub => !foundHubs.includes(hub))
+
+  return { found: foundHubs, notFound: notFoundHubs }
 }

@@ -175,29 +175,48 @@ function Performance() {
     
     let result = [...data]
     
-    if (filters.operatorHub) {
-      result = result.filter(r => r.operator_hub === filters.operatorHub)
+    // Simple search - exact match only
+    if (filters.rider && filters.rider.trim()) {
+      const searchLower = filters.rider.toLowerCase().trim()
+      console.log('Searching for:', searchLower)
+      console.log('Total records before filter:', result.length)
+      
+      result = result.filter(r => {
+        const riderId = (r.rider_id?.toString().toLowerCase() || '')
+        const driverName = (r.driver_name?.toLowerCase() || '')
+        const riderName = (r.rider_name?.toLowerCase() || '')
+        
+        // Partial match for better search
+        const matches = riderId.includes(searchLower) || 
+                      driverName.includes(searchLower) || 
+                      riderName.includes(searchLower)
+        
+        if (matches && result.indexOf(r) < 3) {
+          console.log('Match found:', { riderId, driverName, riderName, searchLower })
+        }
+        
+        return matches
+      })
+      
+      console.log('Records after filter:', result.length)
     }
     
-    if (filters.region) {
-      result = result.filter(r => r.region === filters.region)
-    }
-    
+    // Apply Date filter
     if (filters.dateFrom) {
       result = result.filter(r => r.date >= filters.dateFrom)
     }
-    
     if (filters.dateTo) {
       result = result.filter(r => r.date <= filters.dateTo)
     }
     
-    if (filters.rider) {
-      const searchLower = filters.rider.toLowerCase()
-      result = result.filter(r => 
-        (r.rider_id?.toLowerCase() || '').includes(searchLower) ||
-        (r.driver_name?.toLowerCase() || '').includes(searchLower) ||
-        (r.rider_name?.toLowerCase() || '').includes(searchLower)
-      )
+    // Apply Hub filter
+    if (filters.operatorHub) {
+      result = result.filter(r => r.operator_hub === filters.operatorHub)
+    }
+    
+    // Apply Region filter
+    if (filters.region) {
+      result = result.filter(r => r.region === filters.region)
     }
     
     setFilteredData(result)
@@ -214,7 +233,8 @@ function Performance() {
     setFilters({ dateFrom: '', dateTo: '', region: '', operatorHub: '', rider: '' })
     setAppliedFilters(null)
     setSearchTerm('')
-    setFilteredData(data)
+    // Force refresh to get clean data
+    fetchData()
     setCurrentPage(1)
   }
 
@@ -751,7 +771,7 @@ function Performance() {
             </thead>
             <tbody className="divide-y divide-slate-700">
               {paginatedData.map((row, index) => (
-                <tr key={row.id || index} className="hover:bg-slate-700/50 transition-all duration-200 group">
+                <tr key={`${row.rider_id}-${row.date}-${index}`} className="hover:bg-slate-700/50 transition-all duration-200 group">
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <div className="flex items-center gap-0.5">
                       <button

@@ -1,8 +1,8 @@
 // Clean version - all percentage and grade fixes applied
 import { useState, useEffect, useRef } from 'react'
-import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, Calendar, Building2, MapPin } from 'lucide-react'
+import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, Calendar, Building2, MapPin, CheckCircle, AlertCircle, AlertTriangle, Users } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { getKpiRecords, batchInsertKpiRecords, deleteAllKpiRecords } from '../lib/data'
+import { getKpiRecords, batchInsertKpiRecords, deleteAllKpiRecords, getClusterLeaders } from '../lib/data'
 
 function parsePercentage(value) {
   if (value === null || value === undefined || value === '') return 0
@@ -79,10 +79,19 @@ function KPI() {
     operatorHub: '',
     rider: '',
     grade: '',
+    clusterLead: '',
   })
   const [searchTerm, setSearchTerm] = useState('')
   const fileInputRef = useRef(null)
   const [showUploadModal, setShowUploadModal] = useState(false)
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0, status: '' })
+  const [message, setMessage] = useState({ type: '', text: '' })
+  const [clusterLeaders, setClusterLeaders] = useState([])
+
+  const showMessage = (type, text) => {
+    setMessage({ type, text })
+    setTimeout(() => setMessage({ type: '', text: '' }), 5000)
+  }
 
   useEffect(() => {
     async function fetchData() {
@@ -97,40 +106,94 @@ function KPI() {
     fetchData()
   }, [])
 
+  // Fetch cluster leaders on mount
+  useEffect(() => {
+    async function fetchClusterLeaders() {
+      console.log('Fetching cluster leaders...')
+      const { data, error } = await getClusterLeaders()
+      console.log('Cluster leaders response:', { data, error })
+      if (error) {
+        console.error('Failed to fetch cluster leaders:', error)
+        setClusterLeaders([])
+      } else {
+          setClusterLeaders(data || [])
+      }
+    }
+    fetchClusterLeaders()
+  }, [])
+
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
   }
 
   const applyFilters = () => {
     let result = data
-    
+
     if (searchTerm) {
+      const searchLower = searchTerm.toLowerCase()
       result = result.filter(item => 
-        item.region.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.operator_hub.toLowerCase().includes(searchTerm.toLowerCase())
+        (item.region?.toLowerCase() || '').includes(searchLower) ||
+        (item.sub_region?.toLowerCase() || '').includes(searchLower) ||
+        (item.operator_hub?.toLowerCase() || '').includes(searchLower) ||
+        (item.cluster?.toLowerCase() || '').includes(searchLower)
       )
     }
-    
+
+    // Apply date filters
     if (filters.dateFrom) {
       result = result.filter(item => item.date >= filters.dateFrom)
     }
-    
     if (filters.dateTo) {
       result = result.filter(item => item.date <= filters.dateTo)
     }
-    
-    if (filters.subRegion) {
-      result = result.filter(item => item.sub_region === filters.subRegion)
+
+    // Apply cluster lead filter
+    if (filters.clusterLead) {
+      // Create hub-to-cluster mapping from cluster leaders
+      const hubToClusterMap = {}
+      clusterLeaders.forEach(leader => {
+        if (leader.hubs && Array.isArray(leader.hubs)) {
+          leader.hubs.forEach(hub => {
+            hubToClusterMap[hub] = leader.leader_name
+          })
+        }
+      })
+      
+      result = result.filter(item => {
+        const clusterLead = hubToClusterMap[item.operator_hub]
+        return clusterLead === filters.clusterLead
+      })
     }
-    
-    if (filters.operatorHub) {
-      result = result.filter(item => item.operator_hub === filters.operatorHub)
-    }
-    
-    if (filters.grade) {
-      result = result.filter(item => item.grade === filters.grade)
-    }
-    
+
+    // Sort by date first (newest first), then alphabetically by region, sub-region, operator hub
+    result.sort((a, b) => {
+      // Compare date first (newest first)
+      const dateA = a.date || ''
+      const dateB = b.date || ''
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA) // Newest first
+      }
+      
+      // If dates are equal, compare region
+      const regionA = (a.region || '').toLowerCase()
+      const regionB = (b.region || '').toLowerCase()
+      if (regionA !== regionB) {
+        return regionA.localeCompare(regionB)
+      }
+      
+      // If regions are equal, compare sub-region
+      const subRegionA = (a.sub_region || '').toLowerCase()
+      const subRegionB = (b.sub_region || '').toLowerCase()
+      if (subRegionA !== subRegionB) {
+        return subRegionA.localeCompare(subRegionB)
+      }
+      
+      // If sub-regions are equal, compare operator hub
+      const hubA = (a.operator_hub || '').toLowerCase()
+      const hubB = (b.operator_hub || '').toLowerCase()
+      return hubA.localeCompare(hubB)
+    })
+
     setFilteredData(result)
   }
 
@@ -140,7 +203,7 @@ function KPI() {
   }, [filters, applyFilters])
 
   const clearFilters = () => {
-    setFilters({ dateFrom: '', dateTo: '', subRegion: '', operatorHub: '', rider: '', grade: '' })
+    setFilters({ dateFrom: '', dateTo: '', subRegion: '', operatorHub: '', rider: '', grade: '', clusterLead: '' })
     setSearchTerm('')
     setFilteredData(data)
   }
@@ -148,12 +211,12 @@ function KPI() {
   const handleImport = async (e) => {
     const file = e.target.files[0]
     if (!file) return
-    
+
     const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
-    
+
     try {
       let jsonData = []
-      
+
       if (isExcel) {
         // Parse Excel file
         const data = await file.arrayBuffer()
@@ -166,18 +229,24 @@ function KPI() {
         const lines = csvText.split('\n').filter(line => line.trim())
         jsonData = lines.map(line => line.split(',').map(v => v.trim()))
       }
-      
+
       if (jsonData.length < 2) {
-        alert('No data found in file')
+        showMessage('error', 'No data found in file')
         return
       }
-      
+
       const headers = jsonData[0].map(h => h.toString().trim())
       console.log('Headers found:', headers) // Debug
-      
+
+      setImportProgress({ current: 0, total: jsonData.length - 1, status: 'Processing data...' })
+
       const formattedData = jsonData
         .slice(1)
-        .filter(row => row[0] && row[0].toString().trim() !== '')
+        .filter(row => {
+          // Less strict filtering - only filter out completely empty rows
+          const hasAnyData = row.some(cell => cell && cell.toString().trim() !== '')
+          return hasAnyData
+        })
         .map((row) => {
           const rowData = {}
           headers.forEach((header, idx) => {
@@ -188,6 +257,7 @@ function KPI() {
             region: rowData['Region'] || '',
             sub_region: rowData['Sub Region'] || '',
             operator_hub: rowData['Operator Hub'] || '',
+            cluster: rowData['Cluster'] || '',
             score: parsePercentage(rowData['Score']),
             grade: ((score) => {
               // Auto-calculate grade based on score
@@ -209,27 +279,52 @@ function KPI() {
             loss: parsePercentage(rowData['Loss']),
           }
         })
-      
+
       if (formattedData.length === 0) {
-        alert('No valid data to import')
+        showMessage('error', 'No valid data to import')
+        setImportProgress({ current: 0, total: 0, status: '' })
         return
       }
-      
-      const { data: inserted, error } = await batchInsertKpiRecords(formattedData)
+
+      // Pass all data directly to batchInsertKpiRecords (handles batching internally)
+      const allInserted = []
+
+      setImportProgress({ current: 0, total: formattedData.length, status: `Importing...` })
+
+      const { data: inserted, error } = await batchInsertKpiRecords(formattedData, (progress) => {
+        setImportProgress({
+          current: progress.current,
+          total: formattedData.length,
+          status: progress.status
+        })
+      })
+
       if (error) {
         console.error('Import error:', error)
-        alert('Import failed: ' + error.message)
-      } else if (inserted) {
-        setData(prev => [...inserted, ...prev])
-        setFilteredData(prev => [...inserted, ...prev])
-        setShowUploadModal(false)
-        alert(`Successfully imported ${inserted.length} records`)
+        showMessage('error', `Import failed: ${error.message}. ${inserted?.length || 0} records were imported before the error.`)
+        setImportProgress({ current: 0, total: 0, status: '' })
+        if (inserted && inserted.length > 0) {
+          setData(prev => [...inserted, ...prev])
+          setFilteredData(prev => [...inserted, ...prev])
+        }
+        return
       }
+
+      if (inserted) {
+        allInserted.push(...inserted)
+      }
+
+      setData(prev => [...allInserted, ...prev])
+      setFilteredData(prev => [...allInserted, ...prev])
+      setShowUploadModal(false)
+      showMessage('success', `Successfully imported ${allInserted.length} records`)
+      setImportProgress({ current: 0, total: 0, status: '' })
     } catch (err) {
       console.error('Import error:', err)
-      alert('Import failed: ' + err.message)
+      showMessage('error', 'Import failed: ' + err.message)
+      setImportProgress({ current: 0, total: 0, status: '' })
     }
-    
+
     // Reset file input
     e.target.value = ''
   }
@@ -240,6 +335,7 @@ function KPI() {
       'Region': 'North',
       'Sub Region': 'Metro',
       'Operator Hub': 'Hub A',
+      'Cluster': 'Cluster 1',
       'Score': '85.5',
       'Grade': 'A',
       'Remarks': 'Excellent performance',
@@ -264,11 +360,11 @@ function KPI() {
     
     const { error } = await deleteAllKpiRecords()
     if (error) {
-      alert('Delete failed: ' + error.message)
+      showMessage('error', 'Delete failed: ' + error.message)
     } else {
       setData([])
       setFilteredData([])
-      alert('All records deleted successfully')
+      showMessage('success', 'All records deleted successfully')
     }
   }
 
@@ -278,6 +374,7 @@ function KPI() {
       'Region': item.region,
       'Sub Region': item.sub_region,
       'Operator Hub': item.operator_hub,
+      'Cluster': item.cluster,
       'Score': item.score,
       'Grade': item.grade,
       'Remarks': item.remarks,
@@ -346,10 +443,26 @@ function KPI() {
         </div>
       </div>
 
+      {/* Inline Message Notification */}
+      {message.text && (
+        <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-xs font-medium ${
+          message.type === 'success' 
+            ? 'bg-green-500/10 border border-green-500/30 text-green-400' 
+            : message.type === 'error'
+            ? 'bg-red-500/10 border border-red-500/30 text-red-400'
+            : 'bg-yellow-500/10 border border-yellow-500/30 text-yellow-400'
+        }`}>
+          {message.type === 'success' && <CheckCircle className="w-4 h-4" />}
+          {message.type === 'error' && <AlertCircle className="w-4 h-4" />}
+          {message.type === 'warning' && <AlertTriangle className="w-4 h-4" />}
+          {message.text}
+        </div>
+      )}
+
       {/* Search and Filter */}
       <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 p-2.5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
-          <div className="sm:col-span-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5">
+          <div className="sm:col-span-2 lg:col-span-2">
             <label className="flex items-center gap-1 text-[10px] font-medium text-slate-400 mb-1">
               <Search className="w-3 h-3 text-maroon-500" />
               Search
@@ -388,8 +501,27 @@ function KPI() {
               className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             />
           </div>
+          <div>
+            <label className="flex items-center gap-1 text-[10px] font-medium text-slate-400 mb-1">
+              <Users className="w-3 h-3 text-slate-500" />
+              Cluster Lead
+            </label>
+            <select
+              value={filters.clusterLead}
+              onChange={(e) => handleFilterChange('clusterLead', e.target.value)}
+              className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
+            >
+              <option value="" className="bg-slate-700">All Cluster Leads</option>
+              {clusterLeaders.map(leader => (
+                <option key={leader.id} value={leader.leader_name} className="bg-slate-700">
+                  {leader.leader_name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
+
 
       {/* Data Table */}
       <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 overflow-hidden">
@@ -401,6 +533,7 @@ function KPI() {
                 <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Region</th>
                 <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Sub Region</th>
                 <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Operator Hub</th>
+                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Cluster</th>
                 <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Score</th>
                 <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Grade</th>
                 <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Remarks</th>
@@ -421,6 +554,15 @@ function KPI() {
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs font-semibold text-white">{row.region}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.sub_region}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.operator_hub}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">
+                    {(() => {
+                      // Find cluster leader for this hub
+                      const clusterLeader = clusterLeaders.find(leader => 
+                        leader.hubs && leader.hubs.includes(row.operator_hub)
+                      )
+                      return clusterLeader ? clusterLeader.leader_name : ''
+                    })()}
+                  </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs font-semibold text-white">{row.score}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-0.5 text-[10px] font-semibold rounded-full ${getGradeBadgeColor(row.grade)}`}>
@@ -466,35 +608,56 @@ function KPI() {
               </button>
             </div>
             <div className="p-4 space-y-3">
-              <div className="border-2 border-dashed border-slate-600 rounded-xl p-6 text-center hover:border-maroon-500 transition-all duration-200 hover:bg-slate-800/50">
-                <Upload className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-                <p className="text-slate-300 mb-1 text-sm">Drop your file here or click to browse</p>
-                <p className="text-slate-500 text-xs mb-3">Supports CSV and Excel files</p>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleImport}
-                  accept=".csv,.xlsx,.xls"
-                  className="hidden"
-                  id="kpi-file-upload"
-                />
-                <label
-                  htmlFor="kpi-file-upload"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 cursor-pointer shadow-sm hover:shadow-md"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  Choose File
-                </label>
-              </div>
-              <div className="bg-slate-700/50 rounded-lg p-3">
-                <p className="text-slate-300 text-xs font-medium mb-1">Required columns:</p>
-                <p className="text-slate-400 text-[10px]">Date, Region, Sub Region, Operator Hub, Score, Grade, Remarks, CFR, SR, % Aging = 4 days, Line Haul Pick-up Compliance, COD Remittance, EOD Report Compliance, RTS %, Loss</p>
-              </div>
+              {importProgress.total > 0 ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300">{importProgress.status}</span>
+                    <span className="text-white font-medium">{importProgress.current} / {importProgress.total}</span>
+                  </div>
+                  <div className="w-full bg-slate-700 rounded-full h-2">
+                    <div
+                      className="bg-maroon-600 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}
+                    ></div>
+                  </div>
+                  <div className="text-center">
+                    <Loader2 className="w-6 h-6 animate-spin text-maroon-500 mx-auto" />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="border-2 border-dashed border-slate-600 rounded-xl p-6 text-center hover:border-maroon-500 transition-all duration-200 hover:bg-slate-800/50">
+                    <Upload className="w-10 h-10 text-slate-400 mx-auto mb-3" />
+                    <p className="text-slate-300 mb-1 text-sm">Drop your file here or click to browse</p>
+                    <p className="text-slate-500 text-xs mb-3">Supports CSV and Excel files</p>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleImport}
+                      accept=".csv,.xlsx,.xls"
+                      className="hidden"
+                      id="kpi-file-upload"
+                    />
+                    <label
+                      htmlFor="kpi-file-upload"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 cursor-pointer shadow-sm hover:shadow-md"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      Choose File
+                    </label>
+                  </div>
+                  <div className="bg-slate-700/50 rounded-lg p-3">
+                    <p className="text-slate-300 text-xs font-medium mb-1">Required columns:</p>
+                    <p className="text-slate-400 text-[10px]">Date, Region, Sub Region, Operator Hub, Score, Grade, Remarks, CFR, SR, % Aging = 4 days, Line Haul Pick-up Compliance, COD Remittance, EOD Report Compliance, RTS %, Loss</p>
+                  </div>
+                </>
+              )}
             </div>
             <div className="flex justify-end gap-3 p-4 border-t border-slate-700">
               <button
                 onClick={() => setShowUploadModal(false)}
-                className="px-3 py-1.5 text-xs border border-slate-600 hover:bg-slate-700 text-slate-300 rounded-lg transition-all duration-200 hover:border-slate-500"
+                disabled={importProgress.total > 0}
+                className="px-3 py-1.5 text-xs border border-slate-600 hover:bg-slate-700 text-slate-300 rounded-lg transition-all duration-200 hover:border-slate-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>

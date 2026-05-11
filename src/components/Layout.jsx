@@ -10,7 +10,8 @@ import {
   Database,
   ChevronDown,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Network
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -27,12 +28,13 @@ function Layout({ onLogout }) {
     if (path.startsWith('/data-management/performance')) return 'Performance Management'
     if (path.startsWith('/data-management/kpi')) return 'KPI Management'
     if (path.startsWith('/data-management/rider')) return 'Rider Management'
+    if (path.startsWith('/data-management/clustering')) return 'Clustering Management'
     return 'Dashboard'
   }
   
   const pageTitle = getPageTitle()
 
-  const isDataManagementActive = ['/data-management/performance', '/data-management/kpi', '/data-management/rider'].some(path => 
+  const isDataManagementActive = ['/data-management/performance', '/data-management/kpi', '/data-management/rider', '/data-management/clustering'].some(path => 
     location.pathname.startsWith(path)
   )
 
@@ -174,6 +176,22 @@ function Layout({ onLogout }) {
                     >
                       <Users className="w-4 h-4" />
                       Rider
+                    </NavLink>
+                  </li>
+                  <li>
+                    <NavLink
+                      to="/data-management/clustering"
+                      onClick={() => setSidebarOpen(false)}
+                      className={({ isActive }) =>
+                        `flex items-center text-xs gap-3 px-4 py-2 rounded-lg transition ${
+                          isActive
+                            ? 'bg-maroon-600/50 text-maroon-400 font-medium'
+                            : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                        }`
+                      }
+                    >
+                      <Network className="w-4 h-4" />
+                      Clustering
                     </NavLink>
                   </li>
                 </ul>

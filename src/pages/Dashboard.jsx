@@ -7,8 +7,11 @@ import {
   getDashboardStats,
   getRiderHubStats,
   getPerformanceRecords,
+  getRecentPerformanceRecords,
   getKpiRecords,
-  getRiders
+  getRecentKpiRecords,
+  getRiders,
+  getClusterLeaders
 } from '../lib/data'
 import { 
   TrendingUp, 
@@ -34,6 +37,8 @@ import {
   Loader2, 
   Package,
   CheckCircle,
+  AlertCircle,
+  AlertTriangle,
   LayoutGrid,
   PauseCircle,
   Sparkles
@@ -130,46 +135,40 @@ function ProgressBar({ label, value, total, color = '#a83030' }) {
   )
 }
 
-// Compact Stat Card Component - Futuristic Glassmorphism
-function CompactStatCard({ title, value, subtext, icon: Icon, color }) {
+// Compact Stat Card Component — Clean Single Layer
+function CompactStatCard({ title, value, icon: Icon, accentColor = 'bg-red-600' }) {
   return (
-    <div className="relative group flex-1 min-w-0">
-      {/* Glow effect on hover */}
-      <div className={`absolute -inset-0.5 rounded-lg blur opacity-0 group-hover:opacity-30 transition duration-500 ${color}`}></div>
-      <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-2.5 border border-slate-600/50 hover:border-slate-500/80 transition-all duration-300 hover:shadow-[0_0_20px_rgba(168,48,48,0.15)] h-full">
-        <div className="flex items-center h-full">
-          <div className="flex items-center gap-2">
-            <div className={`p-1.5 rounded-md ${color} shadow-[0_0_10px_rgba(0,0,0,0.3)] shrink-0`}>
-              <Icon className="w-3.5 h-3.5 text-white" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-slate-400 text-[9px] font-medium tracking-wider uppercase truncate">{title}</p>
-              <h3 className="text-base font-bold text-white leading-tight font-mono tracking-tight">{value}</h3>
-            </div>
-          </div>
+    <div className="flex-1 min-w-0 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[8px] p-2 shadow-[0_2px_8px_rgba(0,0,0,0.05)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.07)] hover:-translate-y-0.5 transition-all duration-180">
+      <div className="flex items-center gap-2">
+        <div className={`p-1 rounded-md ${accentColor} shrink-0`}>
+          <Icon className="w-3 h-3 text-white" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[hsl(220,8%,55%)] text-[10px] font-medium tracking-wider uppercase truncate">{title}</p>
+          <h3 className="text-sm font-bold text-[hsl(220,15%,95%)] leading-tight">{value}</h3>
         </div>
       </div>
     </div>
   )
 }
-function StatCard({ title, value, subtext, icon: Icon, trend, color }) {
+function StatCard({ title, value, subtext, icon: Icon, trend, accentColor = 'bg-red-600' }) {
   return (
-    <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+    <div className="bg-[hsl(220,20%,14%)] rounded-[14px] p-6 border border-[hsl(220,13%,30%)] shadow-[0_2px_8px_rgba(0,0,0,0.05)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.07)] hover:-translate-y-0.5 transition-all duration-180">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-slate-400 text-sm font-medium">{title}</p>
-          <h3 className="text-3xl font-bold text-white mt-2">{value}</h3>
-          {subtext && <p className="text-slate-400 text-xs mt-1">{subtext}</p>}
+          <p className="text-[hsl(220,10%,70%)] text-[13px] font-medium">{title}</p>
+          <h3 className="text-[30px] font-bold text-[hsl(220,15%,95%)] mt-2">{value}</h3>
+          {subtext && <p className="text-[hsl(220,8%,55%)] text-[11px] mt-1">{subtext}</p>}
         </div>
-        <div className={`p-3 rounded-lg ${color}`}>
+        <div className={`p-3 rounded-[10px] ${accentColor}`}>
           <Icon className="w-6 h-6 text-white" />
         </div>
       </div>
       {trend && (
         <div className="flex items-center gap-1 mt-4">
-          <TrendingUp className="w-4 h-4 text-green-400" />
-          <span className="text-green-400 text-sm font-medium">{trend}</span>
-          <span className="text-slate-400 text-sm">vs last month</span>
+          <TrendingUp className="w-4 h-4 text-[hsl(142,76%,36%)]" />
+          <span className="text-[hsl(142,76%,36%)] text-[13px] font-medium">{trend}</span>
+          <span className="text-[hsl(220,8%,55%)] text-[13px]">vs last month</span>
         </div>
       )}
     </div>
@@ -201,18 +200,26 @@ function Dashboard() {
   const [selectedRider, setSelectedRider] = useState('')
   const [riderSearchTerm, setRiderSearchTerm] = useState('')
   const [showRiderDropdown, setShowRiderDropdown] = useState(false)
-  const [selectedRegion, setSelectedRegion] = useState('')
+  const [selectedCluster, setSelectedCluster] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [dashboardView, setDashboardView] = useState('hub') // 'hub', 'rider', or 'overall'
   const [selectedDate, setSelectedDate] = useState('') // empty by default
+  const [clusterLeaders, setClusterLeaders] = useState([])
   const [retentionView, setRetentionView] = useState('MTD') // 'MTD' or 'L7D' for Retention & Attrition
   const [riderTrendView, setRiderTrendView] = useState('MTD') // 'MTD' or 'L7D' for Rider Delivery Trend
+  const [overallTrendView, setOverallTrendView] = useState('L7D') // 'P7D' or 'L7D' for Overall Delivery Trend
   const [riderTrendMetric, setRiderTrendMetric] = useState('delivered') // 'delivered', 'onHold', 'successRate', 'productivity'
   const [riderFromDate, setRiderFromDate] = useState('') // From date for Rider Level filter
   const [riderToDate, setRiderToDate] = useState('') // To date for Rider Level filter
   const [hubFromDate, setHubFromDate] = useState('') // From date for Hub Level filter
   const [hubToDate, setHubToDate] = useState('') // To date for Hub Level filter
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [message, setMessage] = useState({ type: '', text: '' })
+
+  const showMessage = (type, text) => {
+    setMessage({ type, text })
+    setTimeout(() => setMessage({ type: '', text: '' }), 5000)
+  }
 
   // Fetch all data
   useEffect(() => {
@@ -223,8 +230,8 @@ function Dashboard() {
         const [statsResult, hubResult, performanceResult, kpiResult, dashboardResult, ridersResult] = await Promise.all([
           getDashboardStats(),
           getRiderHubStats(),
-          getPerformanceRecords(),
-          getKpiRecords(),
+          getPerformanceRecords(), // Now optimized to load all data efficiently
+          getKpiRecords(), // Now optimized to load all data efficiently
           getDashboardMetrics(),
           getRiders()
         ])
@@ -464,8 +471,8 @@ function Dashboard() {
       const [statsResult, hubResult, performanceResult, kpiResult, dashboardResult, ridersResult] = await Promise.all([
         getDashboardStats(),
         getRiderHubStats(),
-        getPerformanceRecords(),
-        getKpiRecords(),
+        getPerformanceRecords(), // Now optimized to load all data efficiently
+        getKpiRecords(), // Now optimized to load all data efficiently
         getDashboardMetrics(),
         getRiders()
       ])
@@ -516,11 +523,8 @@ function Dashboard() {
     if (selectedHub) {
       result = result.filter(h => h.name === selectedHub)
     }
-    if (selectedRegion) {
-      result = result.filter(h => h.region === selectedRegion)
-    }
     return result
-  }, [hubPerformance, selectedHub, selectedRegion])
+  }, [hubPerformance, selectedHub])
 
   // Get unique hubs for filter - from dashboard_metrics
   const uniqueHubs = useMemo(() => {
@@ -568,8 +572,7 @@ function Dashboard() {
       return []
     }
     
-    // Only show data when hub is selected and date(s) are selected
-    if (!selectedHub || (!selectedDate && !hubFromDate && !hubToDate)) {
+    if (!performanceRecords.length) {
       return []
     }
     
@@ -578,37 +581,20 @@ function Dashboard() {
     // Filter by hub
     filtered = filtered.filter(rider => rider.operator_hub === selectedHub)
     
-    // Filter performance records by date range (From/To dates take priority)
-    let performanceToCheck = performanceRecords.filter(p => {
-      const recordDate = p.date?.split('T')[0] || p.date
-      if (hubFromDate && hubToDate) {
-        return recordDate >= hubFromDate && recordDate <= hubToDate
-      }
-      return recordDate === selectedDate
-    })
+    // Filter by date range if specified
+    if (hubFromDate && hubToDate) {
+      filtered = filtered.filter(rider => {
+        if (!rider.last_active || rider.last_active === 'N/A') return false
+        const lastActiveDate = rider.last_active.split('T')[0] || rider.last_active
+        return lastActiveDate >= hubFromDate && lastActiveDate <= hubToDate
+      })
+    }
     
-    // Create Set of rider IDs that exist in performance records
-    const ridersInPerformance = new Set()
-    performanceToCheck.forEach(p => {
-      if (p.rider_id) ridersInPerformance.add(String(p.rider_id))
-      if (p.driver_name) ridersInPerformance.add(p.driver_name)
-      if (p.operator_id) ridersInPerformance.add(String(p.operator_id))
-    })
-    
-    // Find riders from Rider table that are NOT in Performance table
+    // Find riders with no performance records
     const ridersNoRoute = filtered
       .filter(rider => {
-        // Must be Active status
-        if (rider.status !== 'Active') return false
-        
-        // Check if this rider exists in performance records
-        const riderId = String(rider.rider_id)
-        const riderName = rider.rider_name
-        
-        const existsInPerformance = ridersInPerformance.has(riderId) || 
-                                   ridersInPerformance.has(riderName)
-        
-        // Show rider if NOT in performance table
+        const riderId = rider.rider_id
+        const existsInPerformance = performanceRecords.some(p => p.rider_id === riderId)
         const hasNoRoute = !existsInPerformance
         return hasNoRoute
       })
@@ -616,10 +602,32 @@ function Dashboard() {
         riderId: rider.rider_id,
         riderName: rider.rider_name,
         status: rider.status || 'N/A',
-        deployedDate: rider.deployment_date || 'N/A',
-        lastActiveDate: rider.last_active || 'N/A',
-        hub: rider.operator_hub || 'Unknown'
+        lastActive: rider.last_active || 'N/A',
+        operatorHub: rider.operator_hub || 'N/A'
       }))
+      // Sort by last active date first (newest first), then alphabetically by rider name, then rider ID
+      .sort((a, b) => {
+        // Compare last active date first (newest first)
+        const dateA = a.lastActive || ''
+        const dateB = b.lastActive || ''
+        if (dateA !== dateB && dateA !== 'N/A' && dateB !== 'N/A') {
+          return dateB.localeCompare(dateA) // Newest first
+        }
+        
+        // Handle N/A dates - put them last
+        if (dateA === 'N/A' && dateB !== 'N/A') return 1
+        if (dateA !== 'N/A' && dateB === 'N/A') return -1
+        
+        // If dates are equal or both N/A, compare rider name
+        const nameA = (a.riderName || '').toLowerCase()
+        const nameB = (b.riderName || '').toLowerCase()
+        if (nameA !== nameB) {
+          return nameA.localeCompare(nameB)
+        }
+        const idA = (a.riderId || '').toLowerCase()
+        const idB = (b.riderId || '').toLowerCase()
+        return idA.localeCompare(idB)
+      })
     
     return ridersNoRoute
   }, [ridersData, performanceRecords, selectedHub, selectedDate, hubFromDate, hubToDate])
@@ -629,47 +637,60 @@ function Dashboard() {
     return [...new Set(kpiData.map(item => item.category).filter(Boolean))]
   }, [kpiData])
 
-  // Create hub-to-region mapping from KPI data (for Overall view filtering)
-  // Uses sub_region field which is consistent with the region dropdown
-  const hubToRegionMap = useMemo(() => {
+  // Get unique clusters from KPI data
+  const uniqueClusters = useMemo(() => {
+    return [...new Set(kpiData.map(item => item.cluster).filter(Boolean))]
+  }, [kpiData])
+
+  // Fetch cluster leaders on mount
+  useEffect(() => {
+    async function fetchClusterLeaders() {
+      console.log('Fetching cluster leaders...')
+      const { data, error } = await getClusterLeaders()
+      console.log('Cluster leaders response:', { data, error })
+      if (error) {
+        console.error('Failed to fetch cluster leaders:', error)
+        setClusterLeaders([])
+      } else {
+        setClusterLeaders(data || [])
+      }
+    }
+    fetchClusterLeaders()
+  }, [])
+
+  // Create hub-to-cluster mapping from KPI data (for Overall view filtering)
+  // Uses cluster field from KPI records
+  const hubToClusterMap = useMemo(() => {
     const map = {}
     kpiData.forEach(item => {
-      if (item.operator_hub && item.sub_region) {
-        map[item.operator_hub] = item.sub_region
+      // Map both operator_hub and hub field for better matching
+      // Use normalized (lowercase) keys for case-insensitive matching
+      if (item.operator_hub && item.cluster) {
+        map[item.operator_hub.toLowerCase()] = item.cluster
+      }
+      if (item.hub && item.cluster) {
+        map[item.hub.toLowerCase()] = item.cluster
       }
     })
     return map
   }, [kpiData])
 
-  // Filtered stats based on hub/region and date selection - using dashboard_metrics
-  // In Overall view with selectedRegion, shows all hubs in that region
+  // Create cluster leader to hub mapping for Overall view filtering
+  const clusterLeaderHubMap = useMemo(() => {
+    const map = {}
+    clusterLeaders.forEach(leader => {
+      if (leader.hubs && Array.isArray(leader.hubs)) {
+        leader.hubs.forEach(hub => {
+          map[leader.leader_name] = leader.hubs
+        })
+      }
+    })
+    return map
+  }, [clusterLeaders])
+
+  // Filtered stats based on hub/cluster and date selection - using dashboard_metrics
+  // In Overall view with selectedCluster, shows all hubs in that cluster
   const filteredStats = useMemo(() => {
-    
-    let filtered = dashboardMetrics
-    
-    // In Overall view with selectedRegion: filter hubs in that region
-    if (dashboardView === 'overall' && selectedRegion) {
-      filtered = filtered.filter(item => hubToRegionMap[item.hub] === selectedRegion)
-    }
-    // In Hub view with selectedHub: filter by specific hub
-    else if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
-      filtered = filtered.filter(item => item.hub === selectedHub)
-    }
-    
-    // Filter by date range (From/To dates take priority in Hub view)
-    if (dashboardView === 'hub' && hubFromDate && hubToDate) {
-      filtered = filtered.filter(item => {
-        const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
-        return itemDate >= hubFromDate && itemDate <= hubToDate
-      })
-    } else if (selectedDate) {
-      // Fallback to single date if no range is set
-      filtered = filtered.filter(item => {
-        const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
-        return itemDate === selectedDate
-      })
-    }
-    
     // For hub view: if no filters selected, show 0
     if (dashboardView === 'hub' && !selectedHub && !selectedDate && !hubFromDate && !hubToDate) {
       return {
@@ -683,8 +704,8 @@ function Dashboard() {
       }
     }
     
-    // For overall view: if no region and no date selected, show 0
-    if (dashboardView === 'overall' && !selectedRegion && !selectedDate) {
+    // For overall view: if no cluster leader selected, show 0
+    if (dashboardView === 'overall' && !selectedCluster) {
       return {
         successRate: 0,
         activeRiders: 0,
@@ -694,6 +715,196 @@ function Dashboard() {
         clearFloorRate: 0,
         scorecard: '0.0'
       }
+    }
+    
+    // For overall view with cluster leader selected, continue with data calculation
+    // Don't return early - let the calculation proceed
+    
+    // For hub view with filters: calculate from Performance, KPI, and Rider pages
+    if (dashboardView === 'hub' && (selectedHub || selectedDate || hubFromDate || hubToDate)) {
+      let filteredPerformance = performanceRecords
+      let filteredKPI = kpiData
+      
+      // Filter by hub
+      if (selectedHub && selectedHub !== 'All Hubs') {
+        filteredPerformance = filteredPerformance.filter(p => p.hub === selectedHub)
+        filteredKPI = filteredKPI.filter(k => k.operator_hub === selectedHub)
+      }
+      
+      // Filter by date range
+      if (hubFromDate && hubToDate) {
+        filteredPerformance = filteredPerformance.filter(p => {
+          const recordDate = p.date?.split('T')[0] || p.date
+          return recordDate >= hubFromDate && recordDate <= hubToDate
+        })
+        filteredKPI = filteredKPI.filter(k => {
+          const recordDate = k.date?.split('T')[0] || k.date
+          return recordDate >= hubFromDate && recordDate <= hubToDate
+        })
+      } else if (selectedDate) {
+        filteredPerformance = filteredPerformance.filter(p => {
+          const recordDate = p.date?.split('T')[0] || p.date
+          return recordDate === selectedDate
+        })
+        filteredKPI = filteredKPI.filter(k => {
+          const recordDate = k.date?.split('T')[0] || k.date
+          return recordDate === selectedDate
+        })
+      }
+      
+      // Calculate averages from Performance and KPI data
+      if (filteredPerformance.length === 0 && filteredKPI.length === 0) {
+        return {
+          successRate: 0,
+          activeRiders: 0,
+          delivered: 0,
+          onHold: 0,
+          productivity: 0,
+          clearFloorRate: 0,
+          scorecard: '0.0'
+        }
+      }
+      
+      // Calculate success rate from individual rider performance
+      const successRates = []
+      const riders = new Set()
+      let totalDelivered = 0
+      let totalOnHold = 0
+      let totalAssigned = 0
+      
+      filteredPerformance.forEach(record => {
+        const assigned = parseInt(record.assigned) || 0
+        const delivered = parseInt(record.delivered) || 0
+        const onHold = parseInt(record.onhold) || 0
+        
+        if (assigned > 0) {
+          const successRate = (delivered / assigned) * 100
+          successRates.push(successRate)
+        }
+        
+        riders.add(record.rider_id)
+        totalDelivered += delivered
+        totalOnHold += onHold
+        totalAssigned += assigned
+      })
+      
+      // Calculate KPI metrics
+      let totalClearFloor = 0
+      let totalScorecard = 0
+      let kpiCount = 0
+      
+      filteredKPI.forEach(record => {
+        totalClearFloor += parseFloat(record.clear_floor_rate) || 0
+        totalScorecard += parseFloat(record.scorecard) || 0
+        kpiCount++
+      })
+      
+      const avgSuccessRate = successRates.length > 0 ? Math.round(successRates.reduce((sum, rate) => sum + rate, 0) / successRates.length) : 0
+      const avgProductivity = riders.size > 0 ? Math.round(totalAssigned / riders.size) : 0
+      const avgClearFloor = kpiCount > 0 ? Math.round(totalClearFloor / kpiCount) : 0
+      const avgScorecard = kpiCount > 0 ? (totalScorecard / kpiCount).toFixed(1) : '0.0'
+      
+      return {
+        successRate: avgSuccessRate,
+        activeRiders: riders.size,
+        delivered: totalDelivered,
+        onHold: totalOnHold,
+        productivity: avgProductivity,
+        clearFloorRate: avgClearFloor,
+        scorecard: avgScorecard
+      }
+    }
+    
+    // For overall view: process data from cluster leader assigned hubs
+    if (dashboardView === 'overall' && selectedCluster) {
+      let filteredPerformance = performanceRecords
+      let filteredKPI = kpiData
+      
+      // Filter by assigned hubs for the selected cluster leader
+      const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
+      filteredPerformance = filteredPerformance.filter(p => assignedHubs.includes(p.hub))
+      filteredKPI = filteredKPI.filter(k => assignedHubs.includes(k.operator_hub))
+      
+      // Filter by date if specified
+      if (selectedDate) {
+        filteredPerformance = filteredPerformance.filter(p => {
+          const recordDate = p.date?.split('T')[0] || p.date
+          return recordDate === selectedDate
+        })
+        filteredKPI = filteredKPI.filter(k => {
+          const recordDate = k.date?.split('T')[0] || k.date
+          return recordDate === selectedDate
+        })
+      } else {
+        // If no date specified, use all available data
+        // No date filtering - calculate from all data
+      }
+      
+      // Calculate success rate from individual rider performance
+      const successRates = []
+      const riders = new Set()
+      let totalDelivered = 0
+      let totalOnHold = 0
+      let totalAssigned = 0
+      
+      filteredPerformance.forEach(record => {
+        const assigned = parseInt(record.assigned) || 0
+        const delivered = parseInt(record.delivered) || 0
+        const onHold = parseInt(record.onhold) || 0
+        
+        if (assigned > 0) {
+          const successRate = (delivered / assigned) * 100
+          successRates.push(successRate)
+        }
+        
+        riders.add(record.rider_id)
+        totalDelivered += delivered
+        totalOnHold += onHold
+        totalAssigned += assigned
+      })
+      
+      // Calculate KPI metrics
+      let totalClearFloor = 0
+      let totalScorecard = 0
+      let kpiCount = 0
+      
+      filteredKPI.forEach(record => {
+        totalClearFloor += parseFloat(record.clear_floor_rate) || 0
+        totalScorecard += parseFloat(record.scorecard) || 0
+        kpiCount++
+      })
+      
+      const avgSuccessRate = successRates.length > 0 ? Math.round(successRates.reduce((sum, rate) => sum + rate, 0) / successRates.length) : 0
+      const avgProductivity = riders.size > 0 ? Math.round(totalAssigned / riders.size) : 0
+      const avgClearFloor = kpiCount > 0 ? Math.round(totalClearFloor / kpiCount) : 0
+      const avgScorecard = kpiCount > 0 ? (totalScorecard / kpiCount).toFixed(1) : '0.0'
+      
+      return {
+        successRate: avgSuccessRate,
+        activeRiders: riders.size,
+        delivered: totalDelivered,
+        onHold: totalOnHold,
+        productivity: avgProductivity,
+        clearFloorRate: avgClearFloor,
+        scorecard: avgScorecard
+      }
+    }
+    
+    // Default case: use dashboard_metrics
+    let filtered = dashboardMetrics
+    
+    // In Overall view with selectedCluster: filter hubs assigned to that cluster leader
+    if (dashboardView === 'overall' && selectedCluster) {
+      const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
+      filtered = filtered.filter(item => assignedHubs.includes(item.hub))
+    }
+    
+    // Filter by date range
+    if (selectedDate) {
+      filtered = filtered.filter(item => {
+        const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
+        return itemDate === selectedDate
+      })
     }
     
     // Calculate averages from filtered dashboard_metrics
@@ -718,7 +929,6 @@ function Dashboard() {
     const avgClearFloor = Math.round(filtered.reduce((sum, item) => sum + (item.clear_floor_rate || 0), 0) / total)
     const avgScorecard = (filtered.reduce((sum, item) => sum + (item.scorecard || 0), 0) / total).toFixed(1)
     
-    
     return {
       successRate: avgSuccessRate,
       activeRiders: avgRiders,
@@ -728,10 +938,10 @@ function Dashboard() {
       clearFloorRate: avgClearFloor,
       scorecard: avgScorecard
     }
-  }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap, hubFromDate, hubToDate])
+  }, [dashboardMetrics, performanceRecords, kpiData, selectedHub, selectedDate, dashboardView, selectedCluster, hubToClusterMap, hubFromDate, hubToDate])
 
   // KPI spider chart data based on filters
-  // In Overall view with selectedRegion, shows KPI data for all hubs in that region
+  // In Overall view with selectedCluster, shows KPI data for all hubs in that cluster
   const kpiGradeData = useMemo(() => {
     // Helper function to parse percentage (same as KPI page)
     function parsePercentage(value) {
@@ -757,8 +967,8 @@ function Dashboard() {
       ]
     }
     
-    // For overall view: if no region and no date selected, show 0
-    if (dashboardView === 'overall' && !selectedRegion && !selectedDate) {
+    // For overall view: if no cluster leader selected, show 0
+    if (dashboardView === 'overall' && !selectedCluster) {
       return [
         { name: 'Clear Floor Rate', value: 0 },
         { name: 'Success Rate', value: 0 },
@@ -771,11 +981,15 @@ function Dashboard() {
       ]
     }
     
+    // For overall view with cluster leader selected, continue with data calculation
+    // Don't return early - let the calculation proceed
+    
     let filteredKpiData = kpiData
     
-    // In Overall view with selectedRegion: filter KPI data for hubs in that region
-    if (dashboardView === 'overall' && selectedRegion) {
-      filteredKpiData = filteredKpiData.filter(item => hubToRegionMap[item.operator_hub] === selectedRegion)
+    // In Overall view with selectedCluster: filter KPI data for hubs assigned to that cluster leader
+    if (dashboardView === 'overall' && selectedCluster) {
+      const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
+      filteredKpiData = filteredKpiData.filter(item => assignedHubs.includes(item.operator_hub))
     }
     // In Hub view with selectedHub: filter by specific hub
     else if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
@@ -794,6 +1008,9 @@ function Dashboard() {
         const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
         return itemDate === selectedDate
       })
+    } else if (dashboardView === 'overall' && selectedCluster) {
+      // For Overall view with cluster leader selected, use all available data
+      // No date filtering - calculate from all data
     }
     
     const kpiFields = [
@@ -816,72 +1033,254 @@ function Dashboard() {
     })
     
     return result
-  }, [kpiData, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap, hubFromDate, hubToDate])
+  }, [kpiData, selectedHub, selectedDate, dashboardView, selectedCluster, hubToClusterMap, hubFromDate, hubToDate])
 
-  // Filter chart data based on hub/region and date selection - using dashboard_metrics
-// In Overall view with selectedRegion, shows chart data for all hubs in that region
+  // Filter chart data based on hub/cluster and date selection - using dashboard_metrics
+// In Overall view with selectedCluster, shows chart data for all hubs in that cluster
 const filteredChartData = useMemo(() => {
-  // For hub view: if no filters selected, return empty array
-  if (dashboardView === 'hub' && !selectedHub && !selectedDate) {
+  
+  // For hub view: if no hub selected, return empty array (no data shown)
+  if (dashboardView === 'hub' && !selectedHub && !selectedDate && !hubFromDate && !hubToDate) {
     return []
   }
   
-  // For overall view: if no region and no date selected, return empty array
-  if (dashboardView === 'overall' && !selectedRegion && !selectedDate) {
+  // For overall view: if no cluster leader selected, return empty array
+  if (dashboardView === 'overall' && !selectedCluster) {
     return []
   }
   
-  // Use dashboard_metrics as primary source (pre-aggregated)
-  if (!dashboardMetrics.length) {
-    return []
-  }
-  
-  let filtered = dashboardMetrics
-  
-  // In Overall view with selectedRegion: filter hubs in that region
-  if (dashboardView === 'overall' && selectedRegion) {
-    filtered = filtered.filter(item => hubToRegionMap[item.hub] === selectedRegion)
-  }
-  // In Hub view with selectedHub: filter by specific hub
-  else if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
-    filtered = filtered.filter(item => item.hub === selectedHub)
-  }
-  
-  // Filter by date range (From/To dates take priority in Hub view)
-  if (dashboardView === 'hub' && hubFromDate && hubToDate) {
-    filtered = filtered.filter(item => {
-      const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
-      if (!itemDate) return false
-      return itemDate >= hubFromDate && itemDate <= hubToDate
+  // For overall view with cluster leader selected, continue with data calculation
+  // Don't return early - let the calculation proceed
+
+  // For hub view: use same data sources as metric cards
+  if (dashboardView === 'hub' && (selectedHub || selectedDate || hubFromDate || hubToDate)) {
+    const aggregatedData = new Map()
+
+    // Process Performance Records
+    let filteredPerformance = performanceRecords
+    let filteredKPI = kpiData
+
+    // Filter by hub
+    if (selectedHub && selectedHub !== 'All Hubs') {
+      filteredPerformance = filteredPerformance.filter(p => p.hub === selectedHub)
+      filteredKPI = filteredKPI.filter(k => k.operator_hub === selectedHub)
+    }
+
+    // Filter by date range
+    if (hubFromDate && hubToDate) {
+      filteredPerformance = filteredPerformance.filter(p => {
+        const recordDate = p.date?.split('T')[0] || p.date
+        return recordDate >= hubFromDate && recordDate <= hubToDate
+      })
+      filteredKPI = filteredKPI.filter(k => {
+        const recordDate = k.date?.split('T')[0] || k.date
+        return recordDate >= hubFromDate && recordDate <= hubToDate
+      })
+    } else if (selectedDate) {
+      filteredPerformance = filteredPerformance.filter(p => {
+        const recordDate = p.date?.split('T')[0] || p.date
+        return recordDate === selectedDate
+      })
+      filteredKPI = filteredKPI.filter(k => {
+        const recordDate = k.date?.split('T')[0] || k.date
+        return recordDate === selectedDate
+      })
+    }
+
+    // Aggregate data by date
+    filteredPerformance.forEach(record => {
+      const date = record.date?.split('T')[0] || record.date
+      if (!date) return
+
+      if (!aggregatedData.has(date)) {
+        aggregatedData.set(date, {
+          delivered: 0,
+          onHold: 0,
+          assigned: 0,
+          riders: new Set(),
+          successRates: [],
+          productivity: 0,
+          clearFloorRate: 0,
+          scorecard: 0
+        })
+      }
+
+      const data = aggregatedData.get(date)
+      data.delivered += parseInt(record.delivered) || 0
+      data.onHold += parseInt(record.onhold) || 0
+      data.assigned += parseInt(record.assigned) || 0
+      data.riders.add(record.rider_id)
+
+      // Calculate individual success rate
+      if (record.assigned > 0) {
+        const successRate = (parseInt(record.delivered) / parseInt(record.assigned)) * 100
+        data.successRates.push(successRate)
+      }
     })
-  } else if (selectedDate) {
-    // Fallback to single date - show last 7 days from selected date
-    const endDate = new Date(selectedDate)
-    const startDate = new Date(selectedDate)
-    startDate.setDate(endDate.getDate() - 7) // 7 days back
+
+    // Process KPI Records
+    filteredKPI.forEach(record => {
+      const date = record.date?.split('T')[0] || record.date
+      if (!date || !aggregatedData.has(date)) return
+
+      const data = aggregatedData.get(date)
+      data.clearFloorRate += parseFloat(record.clear_floor_rate) || 0
+      data.scorecard += parseFloat(record.scorecard) || 0
+    })
+
+    // Convert to array and calculate averages
+    const result = Array.from(aggregatedData.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, data]) => ({
+        month: date,
+        'Success Rate': data.successRates.length > 0 ? Math.round(data.successRates.reduce((sum, rate) => sum + rate, 0) / data.successRates.length) : 0,
+        'Riders': data.riders.size,
+        'Delivered': data.delivered,
+        'On-Hold': data.onHold,
+        'Productivity': data.riders.size > 0 ? Math.round(data.assigned / data.riders.size) : 0,
+        'Clear Floor Rate': data.riders.size > 0 ? Math.round(data.clearFloorRate / data.riders.size) : 0,
+        'Scorecard': data.riders.size > 0 ? (data.scorecard / data.riders.size).toFixed(1) : 0
+      }))
+
+    return result
+  }
+
+  // For overall view: process data from cluster leader assigned hubs with P7D/L7D logic
+  if (dashboardView === 'overall' && selectedCluster) {
+    const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
     
-    filtered = filtered.filter(item => {
-      const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
-      if (!itemDate) return false
-      const date = new Date(itemDate)
-      return date >= startDate && date <= endDate
+    // Filter data by assigned hubs
+    let filteredPerformance = performanceRecords.filter(p => assignedHubs.includes(p.hub))
+    let filteredKPI = kpiData.filter(k => assignedHubs.includes(k.operator_hub))
+
+    // Calculate date ranges for P7D and L7D
+    const today = new Date()
+    const last7DaysStart = new Date(today)
+    last7DaysStart.setDate(today.getDate() - 7)
+    
+    const prior7DaysStart = new Date(last7DaysStart)
+    prior7DaysStart.setDate(last7DaysStart.getDate() - 7)
+    const prior7DaysEnd = new Date(last7DaysStart)
+    prior7DaysEnd.setDate(prior7DaysEnd.getDate() - 1)
+
+    // Helper function to format date as YYYY-MM-DD
+    const formatDate = (date) => date.toISOString().split('T')[0]
+    
+    // Filter data by date ranges
+    const last7DaysData = filteredPerformance.filter(p => {
+      const recordDate = new Date(p.date?.split('T')[0] || p.date)
+      return recordDate >= last7DaysStart && recordDate <= today
     })
+    
+    const prior7DaysData = filteredPerformance.filter(p => {
+      const recordDate = new Date(p.date?.split('T')[0] || p.date)
+      return recordDate >= prior7DaysStart && recordDate <= prior7DaysEnd
+    })
+
+    const last7DaysKPI = filteredKPI.filter(k => {
+      const recordDate = new Date(k.date?.split('T')[0] || k.date)
+      return recordDate >= last7DaysStart && recordDate <= today
+    })
+    
+    const prior7DaysKPI = filteredKPI.filter(k => {
+      const recordDate = new Date(k.date?.split('T')[0] || k.date)
+      return recordDate >= prior7DaysStart && recordDate <= prior7DaysEnd
+    })
+
+    // Calculate averages for each period
+    const calculatePeriodAverages = (perfData, kpiData) => {
+      if (perfData.length === 0) return null
+      
+      const totals = {
+        delivered: 0,
+        onHold: 0,
+        assigned: 0,
+        riders: new Set(),
+        successRates: [],
+        clearFloorRate: 0,
+        scorecard: 0,
+        kpiCount: 0
+      }
+
+      // Aggregate performance data
+      perfData.forEach(record => {
+        totals.delivered += parseInt(record.delivered) || 0
+        totals.onHold += parseInt(record.onhold) || 0
+        totals.assigned += parseInt(record.assigned) || 0
+        totals.riders.add(record.rider_id)
+        
+        if (record.assigned > 0) {
+          const successRate = (parseInt(record.delivered) / parseInt(record.assigned)) * 100
+          totals.successRates.push(successRate)
+        }
+      })
+
+      // Aggregate KPI data
+      kpiData.forEach(record => {
+        totals.clearFloorRate += parseFloat(record.clear_floor_rate) || 0
+        totals.scorecard += parseFloat(record.scorecard) || 0
+        totals.kpiCount++
+      })
+
+      // Calculate averages
+      const avgSuccessRate = totals.successRates.length > 0 
+        ? Math.round(totals.successRates.reduce((sum, rate) => sum + rate, 0) / totals.successRates.length)
+        : 0
+      
+      const avgClearFloorRate = totals.kpiCount > 0
+        ? Math.round(totals.clearFloorRate / totals.kpiCount)
+        : 0
+      
+      const avgScorecard = totals.kpiCount > 0
+        ? (totals.scorecard / totals.kpiCount).toFixed(1)
+        : 0
+      
+      const avgProductivity = totals.riders.size > 0
+        ? Math.round(totals.assigned / totals.riders.size)
+        : 0
+
+      return {
+        'Success Rate': avgSuccessRate,
+        'Riders': totals.riders.size,
+        'Delivered': totals.delivered,
+        'On-Hold': totals.onHold,
+        'Productivity': avgProductivity,
+        'Clear Floor Rate': avgClearFloorRate,
+        'Scorecard': parseFloat(avgScorecard)
+      }
+    }
+
+    const l7dAverages = calculatePeriodAverages(last7DaysData, last7DaysKPI)
+    const p7dAverages = calculatePeriodAverages(prior7DaysData, prior7DaysKPI)
+
+    // Create bar chart data based on selected view
+    if (overallTrendView === 'L7D' && l7dAverages) {
+      return [{
+        month: 'Last 7 Days',
+        ...l7dAverages
+      }]
+    } else if (overallTrendView === 'P7D' && p7dAverages) {
+      return [{
+        month: 'Prior 7 Days',
+        ...p7dAverages
+      }]
+    } else if (l7dAverages && p7dAverages) {
+      // Show both periods for comparison
+      return [
+        {
+          month: 'Prior 7 Days',
+          ...p7dAverages
+        },
+        {
+          month: 'Last 7 Days',
+          ...l7dAverages
+        }
+      ]
+    }
+
+    return []
   }
-  
-  // Sort by date and format for chart
-  return filtered
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .map(item => ({
-      month: item.date?.slice(0, 10) || item.date, // Show YYYY-MM-DD
-      'Success Rate': Math.round((item.success_rate || 0) * 100),
-      'Riders': item.riders || 0,
-      'Delivered': item.delivered || 0,
-      'On-Hold': item.on_hold || 0,
-      'Productivity': Math.round(item.productivity || 0),
-      'Clear Floor Rate': Math.round(item.clear_floor_rate || 0),
-      'Scorecard': (item.scorecard || 0).toFixed(1)
-    }))
-  }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedRegion, hubToRegionMap, hubFromDate, hubToDate, selectedCategory])
+  }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedCluster, hubToClusterMap, hubFromDate, hubToDate, selectedCategory])
 
   // Close hub dropdown when clicking outside
   useEffect(() => {
@@ -892,7 +1291,9 @@ const filteredChartData = useMemo(() => {
     }
     
     document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
   }, [showHubDropdown])
 
   // Close rider dropdown when clicking outside
@@ -1002,37 +1403,50 @@ const filteredChartData = useMemo(() => {
   // Calculate P7D vs L7D comparison data for Overall view using REAL data
   const getComparisonData = useMemo(() => {
     return () => {
-      // If no region or date is selected, return empty data
-      if (!selectedRegion && !selectedDate) {
+      // If no cluster is selected, return empty data
+      if (!selectedCluster) {
         return []
       }
       
-      // Get all unique hubs from dashboardMetrics
-      let hubs = [...new Set(dashboardMetrics.map(item => item.hub).filter(Boolean))]
       
-      // Filter by selected region if specified
-      if (selectedRegion) {
-        hubs = hubs.filter(hub => {
-          const hubData = dashboardMetrics.find(item => item.hub === hub)
-          return hubData?.region === selectedRegion || hubToRegionMap[hub] === selectedRegion
-        })
+      // Get assigned hubs for the selected cluster leader
+      const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
+      
+      if (assignedHubs.length === 0) {
+        return []
       }
       
-      // Find the latest date in the data
-      const dates = dashboardMetrics.map(item => item.date?.split('T')[0] || item.date).filter(Boolean)
-      const latestDate = dates.length > 0 ? new Date(Math.max(...dates.map(d => new Date(d).getTime()))) : new Date()
+      // Use assigned hubs instead of filtering from dashboardMetrics
+      let hubs = assignedHubs
       
-      // Calculate date ranges
-      // L7D: Last 7 days (today - 6 days back)
-      const l7dEnd = new Date(latestDate)
-      const l7dStart = new Date(latestDate)
-      l7dStart.setDate(l7dEnd.getDate() - 6)
+      // Find latest dates separately for KPI and Performance data
+      const kpiDates = kpiData.map(item => item.date?.split('T')[0] || item.date).filter(Boolean)
+      const perfDates = performanceRecords.map(item => item.date?.split('T')[0] || item.date).filter(Boolean)
       
-      // P7D: Prior 7 days (7-13 days ago from today)
-      const p7dEnd = new Date(latestDate)
-      p7dEnd.setDate(p7dEnd.getDate() - 7)
-      const p7dStart = new Date(latestDate)
-      p7dStart.setDate(p7dStart.getDate() - 13)
+      const kpiLatestDate = kpiDates.length > 0 ? new Date(Math.max(...kpiDates.map(d => new Date(d).getTime()))) : new Date()
+      const perfLatestDate = perfDates.length > 0 ? new Date(Math.max(...perfDates.map(d => new Date(d).getTime()))) : new Date()
+      
+      
+      // Calculate date ranges for KPI data (based on KPI latest date)
+      const kpiL7dEnd = new Date(kpiLatestDate)
+      const kpiL7dStart = new Date(kpiLatestDate)
+      kpiL7dStart.setDate(kpiL7dEnd.getDate() - 6)
+      
+      const kpiP7dEnd = new Date(kpiLatestDate)
+      kpiP7dEnd.setDate(kpiP7dEnd.getDate() - 7)
+      const kpiP7dStart = new Date(kpiLatestDate)
+      kpiP7dStart.setDate(kpiP7dStart.getDate() - 13)
+      
+      // Calculate date ranges for Performance data (based on Performance latest date)
+      const perfL7dEnd = new Date(perfLatestDate)
+      const perfL7dStart = new Date(perfLatestDate)
+      perfL7dStart.setDate(perfL7dEnd.getDate() - 6)
+      
+      const perfP7dEnd = new Date(perfLatestDate)
+      perfP7dEnd.setDate(perfP7dEnd.getDate() - 7)
+      const perfP7dStart = new Date(perfLatestDate)
+      perfP7dStart.setDate(perfP7dStart.getDate() - 13)
+      
       
       // Helper to check if date is in range
       const isInRange = (dateStr, start, end) => {
@@ -1041,35 +1455,51 @@ const filteredChartData = useMemo(() => {
       }
       
       // Calculate averages for each hub
-      return hubs.slice(0, 6).map(hub => {
-        // Get all records for this hub
-        const hubRecords = dashboardMetrics.filter(item => item.hub === hub)
+      return hubs.map(hub => {
         
-        // L7D records (last 7 days)
-        const l7dRecords = hubRecords.filter(item => isInRange(item.date, l7dStart, l7dEnd))
+        // Get KPI records for this hub (for CFR, SR, Loss)
+        const hubKpiRecords = kpiData.filter(item => item.operator_hub === hub)
         
-        // P7D records (prior 7 days, days 8-14)
-        const p7dRecords = hubRecords.filter(item => isInRange(item.date, p7dStart, p7dEnd))
+        // Get Performance records for this hub (for Productivity, Rider Count)
+        const hubPerformanceRecords = performanceRecords.filter(item => item.hub === hub)
         
-        // Calculate averages helper
-        const calcAvg = (records, field, isPercent = false) => {
+        // Show sample performance dates to understand the issue
+        if (hubPerformanceRecords.length > 0) {
+        }
+        
+        // Filter KPI records by KPI date ranges
+        const kpiP7DRecords = hubKpiRecords.filter(item => isInRange(item.date, kpiP7dStart, kpiP7dEnd))
+        const kpiL7DRecords = hubKpiRecords.filter(item => isInRange(item.date, kpiL7dStart, kpiL7dEnd))
+        
+        // Filter Performance records by Performance date ranges
+        const perfP7DRecords = hubPerformanceRecords.filter(item => isInRange(item.date, perfP7dStart, perfP7dEnd))
+        const perfL7DRecords = hubPerformanceRecords.filter(item => isInRange(item.date, perfL7dStart, perfL7dEnd))
+        
+        // Calculate averages helper for KPI data
+        const calcKpiAvg = (records, field) => {
           if (records.length === 0) return 0
-          const sum = records.reduce((acc, item) => {
-            const val = item[field] || 0
-            return acc + (isPercent && val <= 1 ? val * 100 : val)
-          }, 0)
+          const sum = records.reduce((acc, item) => acc + (item[field] || 0), 0)
           return Math.round(sum / records.length)
         }
         
-        // Calculate sum helper for totals
-        const calcSum = (records, field) => {
+        // Calculate sum helper for Performance data
+        const calcPerfSum = (records, field) => {
           return records.reduce((acc, item) => acc + (item[field] || 0), 0)
         }
         
-        // Count unique riders
+        // Count unique riders from Performance records
         const countRiders = (records) => {
-          const uniqueRiders = new Set(records.map(r => r.rider_id || r.operator_id).filter(Boolean))
+          const uniqueRiders = new Set(records.map(r => r.rider_id).filter(Boolean))
           return uniqueRiders.size
+        }
+        
+        // Calculate productivity (average assigned per rider)
+        const calcProductivity = (records) => {
+          if (records.length === 0) return 0
+          const totalAssigned = records.reduce((acc, item) => acc + (item.assigned || 0), 0)
+          const uniqueRiders = new Set(records.map(r => r.rider_id).filter(Boolean))
+          const productivity = uniqueRiders.size > 0 ? Math.round(totalAssigned / uniqueRiders.size) : 0
+          return productivity
         }
         
         // Map full hub names to shortcuts
@@ -1092,30 +1522,35 @@ const filteredChartData = useMemo(() => {
         const cleanHub = hub.replace('OP ', '').replace(' Cebu Hub', ' Cebu')
         const shortHub = hubShortcuts[cleanHub] || cleanHub.split(' ')[0]
         
-        return {
+        const result = {
           hub: shortHub,
-          // Clear Floor Rate
-          cfrP7D: calcAvg(p7dRecords, 'clear_floor_rate', true),
-          cfrL7D: calcAvg(l7dRecords, 'clear_floor_rate', true),
-          // Success Rate
-          srP7D: calcAvg(p7dRecords, 'success_rate', true),
-          srL7D: calcAvg(l7dRecords, 'success_rate', true),
-          // KPI (using scorecard as proxy)
-          kpiP7D: calcAvg(p7dRecords, 'scorecard', false),
-          kpiL7D: calcAvg(l7dRecords, 'scorecard', false),
-          // Productivity
-          prodP7D: calcAvg(p7dRecords, 'productivity', true),
-          prodL7D: calcAvg(l7dRecords, 'productivity', true),
-          // Loss (on_hold total)
-          lossP7D: calcSum(p7dRecords, 'on_hold'),
-          lossL7D: calcSum(l7dRecords, 'on_hold'),
-          // Rider Count
-          ridersP7D: countRiders(p7dRecords),
-          ridersL7D: countRiders(l7dRecords)
+          // Clear Floor Rate from KPI data
+          cfrP7D: calcKpiAvg(kpiP7DRecords, 'cfr'),
+          cfrL7D: calcKpiAvg(kpiL7DRecords, 'cfr'),
+          // Success Rate from KPI data
+          srP7D: calcKpiAvg(kpiP7DRecords, 'sr'),
+          srL7D: calcKpiAvg(kpiL7DRecords, 'sr'),
+          // KPI (using scorecard as proxy from KPI data)
+          kpiP7D: calcKpiAvg(kpiP7DRecords, 'score'),
+          kpiL7D: calcKpiAvg(kpiL7DRecords, 'score'),
+          // Productivity from Performance data (average assigned per rider)
+          prodP7D: calcProductivity(perfP7DRecords),
+          prodL7D: calcProductivity(perfL7DRecords),
+          // Loss from KPI data
+          lossP7D: calcKpiAvg(kpiP7DRecords, 'loss'),
+          lossL7D: calcKpiAvg(kpiL7DRecords, 'loss'),
+          // Rider Count from Performance data
+          ridersP7D: countRiders(perfP7DRecords),
+          ridersL7D: countRiders(perfL7DRecords)
         }
+        
+        return result
       }).filter(hub => hub.cfrL7D > 0 || hub.srL7D > 0 || hub.kpiL7D > 0 || hub.prodL7D > 0 || hub.lossL7D > 0 || hub.ridersL7D > 0) // Only show hubs with data
     }
-  }, [dashboardMetrics, selectedRegion, hubToRegionMap])
+  }, [dashboardMetrics, kpiData, performanceRecords, selectedCluster, hubToClusterMap])
+    
+    // Debug the final comparison data array
+    const comparisonData = getComparisonData()
 
   // Calculate Rider Level data: Individual riders with their metrics
   const riderLevelData = useMemo(() => {
@@ -1371,7 +1806,7 @@ const filteredChartData = useMemo(() => {
         ]
       } else if (dashboardView === 'overall') {
         reportTitle = 'Overall Dashboard'
-        filterInfo = [`Region: ${selectedRegion || 'All Regions'}`, `Date Range: ${dateRangeStr}`]
+        filterInfo = [`Cluster: ${selectedCluster || 'All Clusters'}`, `Date Range: ${dateRangeStr}`]
       }
       
       pdf.text(reportTitle, margin, currentY)
@@ -1415,7 +1850,7 @@ const filteredChartData = useMemo(() => {
         const totalHubs = comparisonData.length
         summaryStats = [
           { label: 'Total Hubs', value: String(totalHubs) },
-          { label: 'Region', value: selectedRegion || 'All' }
+          { label: 'Cluster', value: selectedCluster || 'All' }
         ]
       }
 
@@ -1840,7 +2275,7 @@ const filteredChartData = useMemo(() => {
           ? (selectedRider 
             ? `rider-dashboard-${riderLevelData[0]?.riderName || selectedRider}-${new Date().toISOString().split('T')[0]}.pdf`
             : `riders-list-${selectedHub || 'all'}-${new Date().toISOString().split('T')[0]}.pdf`)
-          : `overall-dashboard-${selectedRegion || 'all-regions'}-${new Date().toISOString().split('T')[0]}.pdf`
+          : `overall-dashboard-${selectedCluster || 'all-clusters'}-${new Date().toISOString().split('T')[0]}.pdf`
 
       // === FOOTER ===
       pdf.setTextColor(150, 150, 150)
@@ -1851,9 +2286,9 @@ const filteredChartData = useMemo(() => {
       pdf.save(filename)
     } catch (error) {
       console.error('Error exporting PDF:', error)
-      alert('Failed to export PDF. Please try again.')
+      showMessage('error', 'Failed to export PDF. Please try again.')
     }
-  }, [dashboardView, filteredChartData, filteredRidersNoRoute, riderLevelData, getComparisonData, filteredStats, kpiGradeData, retentionMetrics, selectedHub, selectedRegion, selectedRider, selectedDate, riderFromDate, riderToDate, riderLevelChartData])
+  }, [dashboardView, filteredChartData, filteredRidersNoRoute, riderLevelData, getComparisonData, filteredStats, kpiGradeData, retentionMetrics, selectedHub, selectedCluster, selectedRider, selectedDate, riderFromDate, riderToDate, riderLevelChartData, showMessage])
 
   const COLORS = ['#a83030', '#c94c4c', '#e07e7e', '#f0b1b1', '#742a2a']
 
@@ -1867,6 +2302,22 @@ const filteredChartData = useMemo(() => {
 
   return (
     <div className="space-y-4 relative">
+      {/* Inline Message Notification */}
+      {message.text && (
+        <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-xs font-medium ${
+          message.type === 'success' 
+            ? 'bg-green-500/10 border border-green-500/30 text-green-400' 
+            : message.type === 'error'
+            ? 'bg-red-500/10 border border-red-500/30 text-red-400'
+            : 'bg-yellow-500/10 border border-yellow-500/30 text-yellow-400'
+        }`}>
+          {message.type === 'success' && <CheckCircle className="w-4 h-4" />}
+          {message.type === 'error' && <AlertCircle className="w-4 h-4" />}
+          {message.type === 'warning' && <AlertTriangle className="w-4 h-4" />}
+          {message.text}
+        </div>
+      )}
+
       {/* Grid Background Pattern */}
       <div className="fixed inset-0 pointer-events-none" style={{
         backgroundImage: `radial-gradient(circle, #334155 0.5px, transparent 0.5px)`,
@@ -1875,15 +2326,15 @@ const filteredChartData = useMemo(() => {
       }}></div>
       
       {/* View Toggle */}
-      <div className="relative bg-slate-800/80 backdrop-blur-md rounded-lg p-2 border border-slate-600/50">
+      <div className="bg-[hsl(220,20%,14%)] rounded-[14px] p-2 border border-[hsl(220,13%,30%)]">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setDashboardView('hub')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all duration-300 ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-[11px] font-medium transition-all duration-180 ${
                 dashboardView === 'hub'
-                  ? 'bg-maroon-600 text-white shadow-[0_0_10px_rgba(168,48,48,0.5)]'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                  ? 'bg-[hsl(0,58%,42%)] text-white shadow-[0_2px_8px_rgba(0,0,0,0.05)]'
+                  : 'text-[hsl(220,8%,55%)] hover:text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)]'
               }`}
             >
               <Building2 className="w-3.5 h-3.5" />
@@ -1891,10 +2342,10 @@ const filteredChartData = useMemo(() => {
             </button>
             <button
               onClick={() => setDashboardView('rider')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all duration-300 ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-[11px] font-medium transition-all duration-180 ${
                 dashboardView === 'rider'
-                  ? 'bg-maroon-600 text-white shadow-[0_0_10px_rgba(168,48,48,0.5)]'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                  ? 'bg-[hsl(0,58%,42%)] text-white shadow-[0_2px_8px_rgba(0,0,0,0.05)]'
+                  : 'text-[hsl(220,8%,55%)] hover:text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)]'
               }`}
             >
               <Users className="w-3.5 h-3.5" />
@@ -1902,10 +2353,10 @@ const filteredChartData = useMemo(() => {
             </button>
             <button
               onClick={() => setDashboardView('overall')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all duration-300 ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-[11px] font-medium transition-all duration-180 ${
                 dashboardView === 'overall'
-                  ? 'bg-maroon-600 text-white shadow-[0_0_10px_rgba(168,48,48,0.5)]'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                  ? 'bg-[hsl(0,58%,42%)] text-white shadow-[0_2px_8px_rgba(0,0,0,0.05)]'
+                  : 'text-[hsl(220,8%,55%)] hover:text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)]'
               }`}
             >
               <Globe className="w-3.5 h-3.5" />
@@ -1914,7 +2365,7 @@ const filteredChartData = useMemo(() => {
           </div>
           <button
             onClick={handleExport}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 font-medium text-xs hover:shadow-md"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(220,18%,18%)] hover:bg-[hsl(220,13%,30%)] text-[hsl(220,15%,95%)] rounded-[6px] transition-all duration-180 font-medium text-[11px] hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
           >
             <Download className="w-3.5 h-3.5" />
             Export
@@ -1922,13 +2373,13 @@ const filteredChartData = useMemo(() => {
         </div>
       </div>
 
-      {/* Filters Bar - Glassmorphism - Hub filter for Hub view, Region filter for Overall view */}
+      {/* Filters Bar - Hub View */}
       {dashboardView === 'hub' && (
-      <div className="relative bg-slate-800/80 backdrop-blur-md rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/80 transition-all duration-300 shadow-[0_0_30px_rgba(0,0,0,0.3)] z-50">
+      <div className="bg-[hsl(220,20%,14%)] rounded-[14px] p-3 border border-[hsl(220,13%,30%)] shadow-[0_2px_8px_rgba(0,0,0,0.05)] z-50">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5 text-slate-400">
+          <div className="flex items-center gap-1.5 text-[hsl(220,8%,55%)]">
             <Filter className="w-3.5 h-3.5" />
-            <span className="text-xs font-medium tracking-wide uppercase">Filters</span>
+            <span className="text-[11px] font-medium tracking-wide uppercase">Filters</span>
           </div>
           
           <div className="relative hub-search-container">
@@ -1939,17 +2390,16 @@ const filteredChartData = useMemo(() => {
               onChange={(e) => {
                 const value = e.target.value
                 setHubSearchTerm(value)
-                // Clear selected hub when input is cleared
                 if (value === '') {
                   setSelectedHub('')
                 }
                 setShowHubDropdown(true)
               }}
               onFocus={() => setShowHubDropdown(true)}
-              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm w-64"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
             />
             {showHubDropdown && (
-              <div className="absolute top-full left-0 mt-1 bg-slate-700/95 border border-slate-600/50 rounded shadow-lg z-[99999] max-h-40 overflow-y-auto w-64">
+              <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
                 {filteredHubs.length > 0 ? (
                   filteredHubs.map(hub => (
                     <div
@@ -1959,13 +2409,13 @@ const filteredChartData = useMemo(() => {
                         setHubSearchTerm(hub)
                         setShowHubDropdown(false)
                       }}
-                      className="px-2 py-1 text-xs text-white hover:bg-slate-600/50 cursor-pointer"
+                      className="px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
                     >
                       {hub}
                     </div>
                   ))
                 ) : (
-                  <div className="px-2 py-1 text-xs text-slate-400">No hubs found</div>
+                  <div className="px-2 py-1 text-[11px] text-[hsl(220,8%,55%)]">No hubs found</div>
                 )}
               </div>
             )}
@@ -1973,23 +2423,23 @@ const filteredChartData = useMemo(() => {
           
           {/* From Date */}
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-400">From:</span>
+            <span className="text-[11px] text-[hsl(220,8%,55%)]">From:</span>
             <input
               type="date"
               value={hubFromDate}
               onChange={(e) => setHubFromDate(e.target.value)}
-              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
             />
           </div>
           
           {/* To Date */}
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-400">To:</span>
+            <span className="text-[11px] text-[hsl(220,8%,55%)]">To:</span>
             <input
               type="date"
               value={hubToDate}
               onChange={(e) => setHubToDate(e.target.value)}
-              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
             />
           </div>
           
@@ -1997,7 +2447,7 @@ const filteredChartData = useMemo(() => {
           <button
             onClick={handleRefreshMetrics}
             disabled={isRefreshing}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 disabled:bg-emerald-700/50 text-white rounded text-xs font-medium transition-all duration-300 hover:shadow-[0_0_15px_rgba(16,185,129,0.4)] backdrop-blur-sm border border-emerald-500/30 disabled:cursor-not-allowed"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(142,76%,36%)] hover:bg-[hsl(142,76%,42%)] disabled:bg-[hsl(142,76%,25%)] text-white rounded-[6px] text-[11px] font-medium transition-all duration-180 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
@@ -2007,13 +2457,13 @@ const filteredChartData = useMemo(() => {
       </div>
       )}
 
-      {/* Filters Bar for Rider Level View - Rider Filter Only */}
+      {/* Filters Bar for Rider Level View */}
       {dashboardView === 'rider' && (
-      <div className="relative bg-slate-800/80 backdrop-blur-md rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/80 transition-all duration-300 shadow-[0_0_30px_rgba(0,0,0,0.3)] z-50">
+      <div className="bg-[hsl(220,20%,14%)] rounded-[14px] p-3 border border-[hsl(220,13%,30%)] shadow-[0_2px_8px_rgba(0,0,0,0.05)] z-50">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5 text-slate-400">
+          <div className="flex items-center gap-1.5 text-[hsl(220,8%,55%)]">
             <Filter className="w-3.5 h-3.5" />
-            <span className="text-xs font-medium tracking-wide uppercase">Filters</span>
+            <span className="text-[11px] font-medium tracking-wide uppercase">Filters</span>
           </div>
 
           <div className="relative rider-search-container">
@@ -2024,17 +2474,16 @@ const filteredChartData = useMemo(() => {
               onChange={(e) => {
                 const value = e.target.value
                 setRiderSearchTerm(value)
-                // Clear selected rider when input is cleared
                 if (value === '') {
                   setSelectedRider('')
                 }
                 setShowRiderDropdown(true)
               }}
               onFocus={() => setShowRiderDropdown(true)}
-              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm w-64"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
             />
             {showRiderDropdown && (
-              <div className="absolute top-full left-0 mt-1 bg-slate-700/95 border border-slate-600/50 rounded shadow-lg z-[99999] max-h-40 overflow-y-auto w-64">
+              <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
                 {filteredRiders.length > 0 ? (
                   filteredRiders.map(rider => (
                     <div
@@ -2044,13 +2493,13 @@ const filteredChartData = useMemo(() => {
                         setRiderSearchTerm(rider.name)
                         setShowRiderDropdown(false)
                       }}
-                      className="px-2 py-1 text-xs text-white hover:bg-slate-600/50 cursor-pointer"
+                      className="px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
                     >
                       {rider.name} ({rider.id})
                     </div>
                   ))
                 ) : (
-                  <div className="px-2 py-1 text-xs text-slate-400">No riders found</div>
+                  <div className="px-2 py-1 text-[11px] text-[hsl(220,8%,55%)]">No riders found</div>
                 )}
               </div>
             )}
@@ -2058,23 +2507,23 @@ const filteredChartData = useMemo(() => {
           
           {/* From Date */}
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-400">From:</span>
+            <span className="text-[11px] text-[hsl(220,8%,55%)]">From:</span>
             <input
               type="date"
               value={riderFromDate}
               onChange={(e) => setRiderFromDate(e.target.value)}
-              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
             />
           </div>
           
           {/* To Date */}
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-400">To:</span>
+            <span className="text-[11px] text-[hsl(220,8%,55%)]">To:</span>
             <input
               type="date"
               value={riderToDate}
               onChange={(e) => setRiderToDate(e.target.value)}
-              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
             />
           </div>
           
@@ -2082,7 +2531,7 @@ const filteredChartData = useMemo(() => {
           <button
             onClick={handleRefreshMetrics}
             disabled={isRefreshing}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 disabled:bg-emerald-700/50 text-white rounded text-xs font-medium transition-all duration-300 hover:shadow-[0_0_15px_rgba(16,185,129,0.4)] backdrop-blur-sm border border-emerald-500/30 disabled:cursor-not-allowed"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(142,76%,36%)] hover:bg-[hsl(142,76%,42%)] disabled:bg-[hsl(142,76%,25%)] text-white rounded-[6px] text-[11px] font-medium transition-all duration-180 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
@@ -2092,32 +2541,34 @@ const filteredChartData = useMemo(() => {
       </div>
       )}
 
-      {/* Filters Bar for Overall View - Region Filter */}
+      {/* Filters Bar for Overall View */}
       {dashboardView === 'overall' && (
-      <div className="relative bg-slate-800/80 backdrop-blur-md rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/80 transition-all duration-300 shadow-[0_0_30px_rgba(0,0,0,0.3)] z-50">
+      <div className="bg-[hsl(220,20%,14%)] rounded-[14px] p-3 border border-[hsl(220,13%,30%)] shadow-[0_2px_8px_rgba(0,0,0,0.05)] z-50">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5 text-slate-400">
+          <div className="flex items-center gap-1.5 text-[hsl(220,8%,55%)]">
             <Filter className="w-3.5 h-3.5" />
-            <span className="text-xs font-medium tracking-wide uppercase">Filters</span>
+            <span className="text-[11px] font-medium tracking-wide uppercase">Filters</span>
           </div>
           
-          {/* Region Filter */}
+          {/* Cluster Filter */}
           <select
-            value={selectedRegion}
-            onChange={(e) => setSelectedRegion(e.target.value)}
-            className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm w-64"
+            value={selectedCluster}
+            onChange={(e) => setSelectedCluster(e.target.value)}
+            className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
           >
-            <option value="">All Regions</option>
-            {uniqueRegions.map(region => (
-              <option key={region} value={region}>{region}</option>
+            <option value="">All Clusters</option>
+            {clusterLeaders.map(leader => (
+              <option key={leader.id} value={leader.leader_name}>{leader.leader_name}</option>
             ))}
           </select>
+
+          
           
           {/* Refresh Button */}
           <button
             onClick={handleRefreshMetrics}
             disabled={isRefreshing}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 disabled:bg-emerald-700/50 text-white rounded text-xs font-medium transition-all duration-300 hover:shadow-[0_0_15px_rgba(16,185,129,0.4)] backdrop-blur-sm border border-emerald-500/30 disabled:cursor-not-allowed"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(142,76%,36%)] hover:bg-[hsl(142,76%,42%)] disabled:bg-[hsl(142,76%,25%)] text-white rounded-[6px] text-[11px] font-medium transition-all duration-180 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
@@ -2204,7 +2655,7 @@ const filteredChartData = useMemo(() => {
           </div>
           <ResponsiveContainer width="100%" height={320}>
             {filteredChartData.length > 0 ? (
-            <AreaChart data={filteredChartData} layout="horizontal">
+            <AreaChart key={filteredChartData.length} data={filteredChartData} layout="horizontal">
               <defs>
                 <linearGradient id="colorDeliveries" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#a83030" stopOpacity={0.3}/>
@@ -2538,30 +2989,6 @@ const filteredChartData = useMemo(() => {
                   Productivity
                 </button>
               </div>
-              <div className="w-px h-4 bg-slate-600 mx-1"></div>
-              {/* Time Range Filter */}
-              <div className="flex gap-1">
-                <button
-                  onClick={() => setRiderTrendView('MTD')}
-                  className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
-                    riderTrendView === 'MTD'
-                      ? 'bg-maroon-500 text-white'
-                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
-                  }`}
-                >
-                  MTD
-                </button>
-                <button
-                  onClick={() => setRiderTrendView('L7D')}
-                  className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
-                    riderTrendView === 'L7D'
-                      ? 'bg-maroon-500 text-white'
-                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
-                  }`}
-                >
-                  L7D
-                </button>
-              </div>
             </div>
           </div>
           
@@ -2656,11 +3083,11 @@ const filteredChartData = useMemo(() => {
       <div className="space-y-4">
         {/* Region Title */}
         <div className="text-center">
-          <h2 className="text-xl font-bold text-white">{selectedRegion || 'All Regions'}</h2>
+          <h2 className="text-xl font-bold text-white">{selectedCluster || 'All Clusters'}</h2>
         </div>
         
         {/* Charts Grid - P7D vs L7D */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           {/* Avg KPI Chart */}
           <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50">
             <div className="flex items-center justify-between mb-4">
