@@ -234,6 +234,33 @@ export async function deleteAllPerformanceRecords() {
 }
 
 // KPI records CRUD
+// Paginated KPI records for better performance
+export async function getKpiRecordsPaginated(page = 0, pageSize = 100, filters = {}) {
+  let query = supabase
+    .from('kpi_records')
+    .select('*', { count: 'exact' })
+    .range(page * pageSize, (page + 1) * pageSize - 1)
+    .order('date', { ascending: false })
+  
+  if (filters.region) {
+    query = query.eq('region', filters.region)
+  }
+  if (filters.operator_hub) {
+    query = query.eq('operator_hub', filters.operator_hub)
+  }
+  if (filters.grade) {
+    query = query.eq('grade', filters.grade)
+  }
+  if (filters.search) {
+    query = query.or(`region.ilike.%${filters.search}%,operator_hub.ilike.%${filters.search}%`)
+  }
+
+  const { data, error, count } = await query
+  
+  return { data: data || [], error, totalCount: count || 0 }
+}
+
+// Legacy function for backward compatibility
 export async function getKpiRecords(filters = {}) {
   console.log('getKpiRecords: Starting optimized fetch...')
   
@@ -345,6 +372,27 @@ export async function getRiderHubStats() {
   
   return { data: result, error: null }
 }
+// Paginated riders for better performance
+export async function getRidersPaginated(page = 0, pageSize = 100, filters = {}) {
+  let query = supabase
+    .from('riders')
+    .select('*', { count: 'exact' })
+    .range(page * pageSize, (page + 1) * pageSize - 1)
+    .order('last_active', { ascending: false })
+  
+  if (filters.status) {
+    query = query.eq('status', filters.status)
+  }
+  if (filters.search) {
+    query = query.or(`rider_id.ilike.%${filters.search}%,rider_name.ilike.%${filters.search}%`)
+  }
+
+  const { data, error, count } = await query
+  
+  return { data: data || [], error, totalCount: count || 0 }
+}
+
+// Legacy function for backward compatibility
 export async function getRiders(filters = {}) {
   const allData = []
   let page = 0

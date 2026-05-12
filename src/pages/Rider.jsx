@@ -128,11 +128,9 @@ function Rider() {
             }
           })
           
-          // Filter out riders with N/A deployment date
-          const filteredRiders = allRiders.filter(rider => rider.deployment_date !== 'N/A')
-          
+          // Show all riders (including those with N/A deployment date)
           setData(allRiders)
-          setFilteredData(filteredRiders)
+          setFilteredData(allRiders)
         })
       } catch (error) {
         console.error('Error fetching Rider data:', error)
@@ -159,9 +157,6 @@ function Rider() {
   const applyFilters = useCallback((search = searchTerm, status = statusFilter, hub = operatorHubFilter) => {
     let result = data
     
-    // Filter out riders with N/A deployment date
-    result = result.filter(item => item.deployment_date !== 'N/A')
-    
     if (search) {
       const searchLower = search.toLowerCase()
       result = result.filter(item => 
@@ -186,9 +181,8 @@ function Rider() {
     setStatusFilter('')
     setOperatorHubFilter('')
     setSearchTerm('')
-    // Maintain N/A deployment date filter
-    const filteredRiders = data.filter(item => item.deployment_date !== 'N/A')
-    setFilteredData(filteredRiders)
+    // Show all riders
+    setFilteredData(data)
     setCurrentPage(1)
   }
 

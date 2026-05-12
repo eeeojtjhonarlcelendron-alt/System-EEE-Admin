@@ -654,6 +654,7 @@ function Dashboard() {
         riderName: rider.rider_name,
         status: rider.status || 'N/A',
         lastActive: rider.last_active || 'N/A',
+        deploymentDate: rider.deployment_date || 'N/A',
         operatorHub: rider.operator_hub || 'N/A'
       }))
       // Sort by last active date first (newest first), then alphabetically by rider name, then rider ID
@@ -2926,10 +2927,10 @@ const filteredChartData = useMemo(() => {
                         </span>
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <span className="text-slate-300 font-mono">{rider.deployedDate}</span>
+                        <span className="text-slate-300 font-mono">{rider.deploymentDate}</span>
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <span className="text-emerald-400 font-mono">{rider.lastActiveDate}</span>
+                        <span className="text-emerald-400 font-mono">{rider.lastActive}</span>
                       </td>
                     </tr>
                   ))}
