@@ -13,6 +13,7 @@ import {
   getRiders,
   getClusterLeaders
 } from '../lib/data'
+import { getKPIMetricsByHub, getOverallKPIMetrics } from '../lib/kpiMetrics'
 import { 
   SkeletonDashboard,
   SkeletonStatsCard,
@@ -206,6 +207,12 @@ function Dashboard() {
   const [selectedHub, setSelectedHub] = useState('')
   const [hubSearchTerm, setHubSearchTerm] = useState('')
   const [showHubDropdown, setShowHubDropdown] = useState(false)
+  const [kpiMetricsByHub, setKpiMetricsByHub] = useState([])
+  const [overallKpiMetrics, setOverallKpiMetrics] = useState({
+    clearFloorRate: 0,
+    scorecard: '0.0',
+    totalRecords: 0
+  })
   const [selectedRider, setSelectedRider] = useState('')
   const [riderSearchTerm, setRiderSearchTerm] = useState('')
   const [showRiderDropdown, setShowRiderDropdown] = useState(false)
@@ -501,6 +508,18 @@ function Dashboard() {
           // Extract unique sub-regions from KPI data
           const subRegions = [...new Set(kpiResult.data.map(item => item.sub_region).filter(Boolean))]
           setUniqueRegions(subRegions)
+          
+          // Fetch KPI metrics by hub
+          const kpiMetricsResult = await getKPIMetricsByHub()
+          if (kpiMetricsResult.data) {
+            setKpiMetricsByHub(kpiMetricsResult.data)
+          }
+          
+          // Fetch overall KPI metrics
+          const overallKpiResult = await getOverallKPIMetrics()
+          if (overallKpiResult.data) {
+            setOverallKpiMetrics(overallKpiResult.data)
+          }
         }
       } catch (error) {
         // Error fetching dashboard data
@@ -846,13 +865,34 @@ function Dashboard() {
       let kpiCount = 0
       
       filteredKPI.forEach(record => {
-        totalClearFloor += parseFloat(record.clear_floor_rate) || 0
-        totalScorecard += parseFloat(record.scorecard) || 0
+        totalClearFloor += parseFloat(record.cfr) || 0
+        totalScorecard += parseFloat(record.sr) || 0
         kpiCount++
       })
       
+      // Calculate productivity as average of daily productivity values
+      // Group performance records by date and calculate productivity per day, then average
+      const productivityByDate = {}
+      
+      filteredPerformance.forEach(record => {
+        const recordDate = record.date?.split('T')[0] || record.date
+        if (!productivityByDate[recordDate]) {
+          productivityByDate[recordDate] = { totalAssigned: 0, uniqueRiders: new Set() }
+        }
+        const assigned = parseInt(record.assigned) || 0
+        productivityByDate[recordDate].totalAssigned += assigned
+        productivityByDate[recordDate].uniqueRiders.add(record.rider_id)
+      })
+      
+      // Calculate average daily productivity
+      const dailyProductivities = Object.values(productivityByDate).map(day => 
+        day.uniqueRiders.size > 0 ? day.totalAssigned / day.uniqueRiders.size : 0
+      )
+      const avgProductivity = dailyProductivities.length > 0 
+        ? Math.round(dailyProductivities.reduce((sum, val) => sum + val, 0) / dailyProductivities.length)
+        : 0
+      
       const avgSuccessRate = successRates.length > 0 ? Math.round(successRates.reduce((sum, rate) => sum + rate, 0) / successRates.length) : 0
-      const avgProductivity = riders.size > 0 ? Math.round(totalAssigned / riders.size) : 0
       const avgClearFloor = kpiCount > 0 ? Math.round(totalClearFloor / kpiCount) : 0
       const avgScorecard = kpiCount > 0 ? (totalScorecard / kpiCount).toFixed(1) : '0.0'
       
@@ -921,13 +961,47 @@ function Dashboard() {
       let kpiCount = 0
       
       filteredKPI.forEach(record => {
-        totalClearFloor += parseFloat(record.clear_floor_rate) || 0
-        totalScorecard += parseFloat(record.scorecard) || 0
+        totalClearFloor += parseFloat(record.cfr) || 0
+        totalScorecard += parseFloat(record.sr) || 0
         kpiCount++
       })
       
+      // Calculate productivity as average of daily productivity values from dashboard_metrics
+      let filteredDashboardMetrics = dashboardMetrics
+      filteredDashboardMetrics = filteredDashboardMetrics.filter(m => assignedHubs.includes(m.hub))
+      if (selectedDate) {
+        filteredDashboardMetrics = filteredDashboardMetrics.filter(m => {
+          const recordDate = m.date?.split('T')[0] || m.date
+          return recordDate === selectedDate
+        })
+      }
+      
       const avgSuccessRate = successRates.length > 0 ? Math.round(successRates.reduce((sum, rate) => sum + rate, 0) / successRates.length) : 0
-      const avgProductivity = riders.size > 0 ? Math.round(totalAssigned / riders.size) : 0
+      
+      let avgProductivity = 0
+      if (filteredDashboardMetrics.length > 0) {
+        // Use dashboard_metrics if available
+        avgProductivity = Math.round(filteredDashboardMetrics.reduce((sum, item) => sum + (item.productivity || 0), 0) / filteredDashboardMetrics.length)
+      } else {
+        // Fallback: Calculate as average of daily productivity from performance data
+        const productivityByDate = {}
+        filteredPerformance.forEach(record => {
+          const recordDate = record.date?.split('T')[0] || record.date
+          if (!productivityByDate[recordDate]) {
+            productivityByDate[recordDate] = { totalAssigned: 0, uniqueRiders: new Set() }
+          }
+          const assigned = parseInt(record.assigned) || 0
+          productivityByDate[recordDate].totalAssigned += assigned
+          productivityByDate[recordDate].uniqueRiders.add(record.rider_id)
+        })
+        const dailyProductivities = Object.values(productivityByDate).map(day => 
+          day.uniqueRiders.size > 0 ? day.totalAssigned / day.uniqueRiders.size : 0
+        )
+        avgProductivity = dailyProductivities.length > 0 
+          ? Math.round(dailyProductivities.reduce((sum, val) => sum + val, 0) / dailyProductivities.length)
+          : 0
+      }
+      
       const avgClearFloor = kpiCount > 0 ? Math.round(totalClearFloor / kpiCount) : 0
       const avgScorecard = kpiCount > 0 ? (totalScorecard / kpiCount).toFixed(1) : '0.0'
       
@@ -1176,8 +1250,8 @@ const filteredChartData = useMemo(() => {
       if (!date || !aggregatedData.has(date)) return
 
       const data = aggregatedData.get(date)
-      data.clearFloorRate += parseFloat(record.clear_floor_rate) || 0
-      data.scorecard += parseFloat(record.scorecard) || 0
+      data.clearFloorRate += parseFloat(record.cfr) || 0
+      data.scorecard += parseFloat(record.sr) || 0
     })
 
     // Convert to array and calculate averages
@@ -1269,8 +1343,8 @@ const filteredChartData = useMemo(() => {
 
       // Aggregate KPI data
       kpiData.forEach(record => {
-        totals.clearFloorRate += parseFloat(record.clear_floor_rate) || 0
-        totals.scorecard += parseFloat(record.scorecard) || 0
+        totals.clearFloorRate += parseFloat(record.cfr) || 0
+        totals.scorecard += parseFloat(record.sr) || 0
         totals.kpiCount++
       })
 
@@ -1545,13 +1619,30 @@ const filteredChartData = useMemo(() => {
           return uniqueRiders.size
         }
         
-        // Calculate productivity (average assigned per rider)
+        // Calculate productivity as average of daily productivity values
         const calcProductivity = (records) => {
           if (records.length === 0) return 0
-          const totalAssigned = records.reduce((acc, item) => acc + (item.assigned || 0), 0)
-          const uniqueRiders = new Set(records.map(r => r.rider_id).filter(Boolean))
-          const productivity = uniqueRiders.size > 0 ? Math.round(totalAssigned / uniqueRiders.size) : 0
-          return productivity
+
+          const productivityByDate = {}
+          records.forEach(record => {
+            const recordDate = record.date?.split('T')[0] || record.date
+            if (!recordDate) return
+
+            if (!productivityByDate[recordDate]) {
+              productivityByDate[recordDate] = { totalAssigned: 0, uniqueRiders: new Set() }
+            }
+
+            productivityByDate[recordDate].totalAssigned += parseInt(record.assigned) || 0
+            productivityByDate[recordDate].uniqueRiders.add(record.rider_id)
+          })
+
+          const dailyProductivities = Object.values(productivityByDate).map(day => 
+            day.uniqueRiders.size > 0 ? day.totalAssigned / day.uniqueRiders.size : 0
+          )
+
+          return dailyProductivities.length > 0
+            ? Math.round(dailyProductivities.reduce((sum, value) => sum + value, 0) / dailyProductivities.length)
+            : 0
         }
         
         // Map full hub names to shortcuts
@@ -2313,8 +2404,8 @@ const filteredChartData = useMemo(() => {
             pdf.text(`${item.cfrL7D}%`, 70, startY)
             pdf.text(`${item.srP7D}%`, 95, startY)
             pdf.text(`${item.srL7D}%`, 120, startY)
-            pdf.text(`${item.prodP7D}%`, 145, startY)
-            pdf.text(`${item.prodL7D}%`, 170, startY)
+            pdf.text(String(item.prodP7D), 145, startY)
+            pdf.text(String(item.prodL7D), 170, startY)
             startY += 5
           })
         }
@@ -2662,7 +2753,7 @@ const filteredChartData = useMemo(() => {
         />
         <CompactStatCard 
           title="Productivity" 
-          value={`${filteredStats.productivity || 0}%`} 
+          value={`${filteredStats.productivity || 0}`} 
           icon={TrendingUp}
           color="bg-cyan-600"
         />
@@ -3467,8 +3558,8 @@ const filteredChartData = useMemo(() => {
                 <YAxis 
                   stroke="#94a3b8" 
                   fontSize={10}
-                  domain={[0, 100]}
-                  tickFormatter={(value) => `${value}%`}
+                  domain={[0, 'auto']}
+                  tickFormatter={(value) => String(value)}
                 />
                 <Tooltip 
                   cursor={false}
@@ -3479,13 +3570,13 @@ const filteredChartData = useMemo(() => {
                     color: '#fff',
                     fontSize: '11px'
                   }}
-                  formatter={(value) => [`${value}%`, '']}
+                  formatter={(value) => [String(value), '']}
                 />
                 <Bar dataKey="prodP7D" fill="#a83030" name="P7D" radius={[4, 4, 0, 0]}>
-                  <LabelList dataKey="prodP7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
+                  <LabelList dataKey="prodP7D" position="top" formatter={(value) => String(value)} fill="#fff" fontSize={10} />
                 </Bar>
                 <Bar dataKey="prodL7D" fill="#eb6262" name="L7D" radius={[4, 4, 0, 0]}>
-                  <LabelList dataKey="prodL7D" position="top" formatter={(value) => `${value}%`} fill="#fff" fontSize={10} />
+                  <LabelList dataKey="prodL7D" position="top" formatter={(value) => String(value)} fill="#fff" fontSize={10} />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
