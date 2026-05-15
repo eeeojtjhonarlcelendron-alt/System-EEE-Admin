@@ -78,6 +78,28 @@ export async function getKpiGradeDistribution() {
   return { data: distribution, error: null }
 }
 
+// Get all unique hubs and regions from performance records
+export async function getAllUniqueHubsAndRegions() {
+  console.log('getAllUniqueHubsAndRegions called')
+  const { data, error } = await supabase
+    .from('performance_records')
+    .select('hub, region')
+    .limit(1000) // Limit to avoid loading too much data
+
+  console.log('Supabase query result:', { dataLength: data?.length, error })
+
+  if (error) {
+    console.error('Error in getAllUniqueHubsAndRegions:', error)
+    return { hubs: [], regions: [], error }
+  }
+
+  const hubs = [...new Set(data.filter(item => item && item.hub && item.hub.trim()).map(item => item.hub.trim()))].sort()
+  const regions = [...new Set(data.filter(item => item && item.region && item.region.trim()).map(item => item.region.trim()))].sort()
+
+  console.log('Processed hubs:', hubs.length, 'regions:', regions.length)
+  return { hubs, regions, error: null }
+}
+
 // Performance records CRUD - Paginated fetch for better performance
 export async function getPerformanceRecordsPaginated(page = 0, pageSize = 100, filters = {}) {
   let query = supabase
@@ -427,6 +449,23 @@ export async function getRiders(filters = {}) {
   }
   
   return { data: allData, error: null }
+}
+
+export async function getDistinctPerformanceRegions() {
+  const { data, error } = await supabase
+    .from('performance_records')
+    .select('region')
+    .not('region', 'is', null)
+    .neq('region', '')
+    .order('region', { ascending: true })
+    .limit(1000)
+
+  if (error) {
+    return { data: [], error }
+  }
+
+  const regions = [...new Set(data.map(item => item.region).filter(Boolean))]
+  return { data: regions, error: null }
 }
 
 export async function refreshRiders() {

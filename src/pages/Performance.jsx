@@ -61,7 +61,8 @@ function parseDate(dateValue) {
 function Performance() {
   const [data, setData] = useState([])
   const [filteredData, setFilteredData] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(true) // Initial page load blocking screen
+  const [isFiltering, setIsFiltering] = useState(false) // Non-blocking filter updates
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [loadingStage, setLoadingStage] = useState('')
   const [totalCount, setTotalCount] = useState(0)
@@ -76,6 +77,8 @@ function Performance() {
   const [appliedFilters, setAppliedFilters] = useState(null) // Only load when Apply is clicked
   const [searchTerm, setSearchTerm] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [isRiderMapReady, setIsRiderMapReady] = useState(false)
+  const [allRiders, setAllRiders] = useState([])
   const itemsPerPage = 100
   const fileInputRef = useRef(null)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -93,9 +96,14 @@ function Performance() {
     failed_rate: '',
     region: ''
   })
+  const riderMapRef = useRef(new Map())
+  const syncRidersGuard = useRef(false)
 
   // Sync riders from existing performance records on mount
   useEffect(() => {
+    if (syncRidersGuard.current) return
+    syncRidersGuard.current = true
+
     async function syncExistingRiders() {
       console.log('Syncing riders from existing performance records...')
       const { data: syncedCount, error } = await syncRidersFromPerformance()
@@ -108,163 +116,111 @@ function Performance() {
     syncExistingRiders()
   }, [])
 
-  // Initial data load on mount
-  // Fetch all rider data on mount for client-side pagination
-  useEffect(() => {
-    async function fetchData() {
-      try {
+  async function fetchPageData(page = currentPage, activeFilters = filters, isInitial = false) {
+    try {
+      if (isInitial) {
         setLoading(true)
-        setLoadingProgress(0)
-        setLoadingStage('Initializing Performance data fetch...')
-        
-        // Create incremental progress function
-        const incrementProgress = async (startProgress, targetProgress, stageText, dataFetchFunction) => {
-          setLoadingStage(stageText)
-          const steps = targetProgress - startProgress
-          
-          // Increment by 1% at a time
-          for (let i = 1; i <= steps; i++) {
-            setLoadingProgress(startProgress + i)
-            await new Promise(resolve => setTimeout(resolve, 20)) // Small delay for visibility
-          }
-          
-          return await dataFetchFunction()
-        }
-        
-        let currentProgress = 0
-        
-        // Stage 1: Fetch riders (30%)
-        const { data: riders, error: ridersError } = await incrementProgress(currentProgress, 30, 'Loading rider information...', () => getRiders())
-        currentProgress = 30
-        
-        // Stage 2: Fetch performance records (60%)
-        const { data: records, error: recordsError } = await incrementProgress(currentProgress, 60, 'Loading performance records...', () => getPerformanceRecords())
-        currentProgress = 60
-        
-        // Stage 3: Process data (85%)
-        await incrementProgress(currentProgress, 85, 'Processing performance data...', async () => {
-          // Create a map of rider data by rider_id
-          const riderMap = new Map()
-          if (riders) {
-            riders.forEach(rider => {
-              riderMap.set(rider.rider_id, rider)
-            })
-          }
-          
-          // Create merged data from performance records
-          // Include all performance records, even if rider doesn't exist in riders table
-          const mergedData = []
-          if (records) {
-            records.forEach(record => {
-              const rider = riderMap.get(record.rider_id) || {}
-              mergedData.push({
-                ...record,
-                rider_name: rider.rider_name || record.driver_name,
-                operator_hub: rider.operator_hub || record.hub,
-                region: rider.region || record.region
-              })
-            })
-          }
-          
-          setData(mergedData)
-          setFilteredData(mergedData)
-          setTotalCount(mergedData.length)
-          setCurrentPage(1)
-        })
-        currentProgress = 85
-        
-        // Final stage: Complete (100%)
-        setLoadingStage('Finalizing...')
-        for (let i = 86; i <= 100; i++) {
-          setLoadingProgress(i)
-          await new Promise(resolve => setTimeout(resolve, 20))
-        }
-      } catch (error) {
-        console.error('Error fetching Performance data:', error)
-      } finally {
-        setLoading(false)
+      } else {
+        setIsFiltering(true)
       }
+      setLoadingProgress(0)
+      setLoadingStage('Loading performance records...')
+
+      // Fetch current page of performance records from the server
+      const { data: records, error, totalCount: count } = await getPerformanceRecordsPaginated(
+        page - 1,
+        itemsPerPage,
+        {
+          hub: activeFilters.operatorHub,
+          region: activeFilters.region,
+          dateFrom: activeFilters.dateFrom,
+          dateTo: activeFilters.dateTo,
+          search: activeFilters.rider
+        }
+      )
+
+      if (error) {
+        console.error('Error fetching paginated performance records:', error)
+        setData([])
+        setFilteredData([])
+        setTotalCount(0)
+        return
+      }
+
+      const mergedData = records.map(record => {
+        const rider = riderMapRef.current.get(record.rider_id) || {}
+        return {
+          ...record,
+          rider_name: rider.rider_name || record.driver_name,
+          operator_hub: rider.operator_hub || record.hub,
+          region: rider.region || record.region
+        }
+      })
+
+      setData(mergedData)
+      setFilteredData(mergedData)
+      setTotalCount(count || 0)
+    } catch (error) {
+      console.error('Error fetching page data:', error)
+      setData([])
+      setFilteredData([])
+      setTotalCount(0)
+    } finally {
+      if (isInitial) {
+        setLoading(false)
+      } else {
+        setIsFiltering(false)
+      }
+      setLoadingProgress(100)
+      setLoadingStage('')
     }
-    fetchData()
+  }
+
+  // Load rider metadata once, then enable paginated data loading
+  useEffect(() => {
+    async function loadRiderMetadata() {
+      const { data: riders, error } = await getRiders()
+      if (error) {
+        console.error('Error loading rider metadata:', error)
+      } else {
+        const riderMap = new Map()
+        riders.forEach(rider => riderMap.set(rider.rider_id, rider))
+        riderMapRef.current = riderMap
+        setAllRiders(riders)
+      }
+      setIsRiderMapReady(true)
+    }
+    loadRiderMetadata()
   }, [])
+
+  // Fetch a new page whenever filters or page changes, after riders metadata is ready
+  useEffect(() => {
+    if (!isRiderMapReady) return
+    const isInitial = data.length === 0 && loading
+    fetchPageData(currentPage, filters, isInitial)
+  }, [currentPage, filters, isRiderMapReady])
 
   // Update filters and trigger apply automatically
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
+    setCurrentPage(1)
   }
 
   // Debounced search handler - connects to rider filter
   const handleSearchChange = useCallback((value) => {
     setSearchTerm(value)
     setFilters(prev => ({ ...prev, rider: value }))
+    setCurrentPage(1)
   }, [])
 
   const applyFilters = useCallback(() => {
-    // Apply client-side filters to the full dataset
-    if (!data.length) return
-    
-    let result = [...data]
-    
-    // Simple search - exact match only
-    if (filters.rider && filters.rider.trim()) {
-      const searchLower = filters.rider.toLowerCase().trim()
-      console.log('Searching for:', searchLower)
-      console.log('Total records before filter:', result.length)
-      
-      result = result.filter(r => {
-        const riderId = (r.rider_id?.toString().toLowerCase() || '')
-        const driverName = (r.driver_name?.toLowerCase() || '')
-        const riderName = (r.rider_name?.toLowerCase() || '')
-        
-        // Partial match for better search
-        const matches = riderId.includes(searchLower) || 
-                      driverName.includes(searchLower) || 
-                      riderName.includes(searchLower)
-        
-        if (matches && result.indexOf(r) < 3) {
-          console.log('Match found:', { riderId, driverName, riderName, searchLower })
-        }
-        
-        return matches
-      })
-      
-      console.log('Records after filter:', result.length)
-    }
-    
-    // Apply Date filter
-    if (filters.dateFrom) {
-      result = result.filter(r => r.date >= filters.dateFrom)
-    }
-    if (filters.dateTo) {
-      result = result.filter(r => r.date <= filters.dateTo)
-    }
-    
-    // Apply Hub filter
-    if (filters.operatorHub) {
-      result = result.filter(r => r.operator_hub === filters.operatorHub)
-    }
-    
-    // Apply Region filter
-    if (filters.region) {
-      result = result.filter(r => r.region === filters.region)
-    }
-    
-    setFilteredData(result)
-    setTotalCount(result.length)
     setCurrentPage(1)
-  }, [data, filters])
-
-  // Auto-apply filters when they change
-  useEffect(() => {
-    applyFilters()
-  }, [filters, applyFilters])
+  }, [])
 
   const clearFilters = () => {
     setFilters({ dateFrom: '', dateTo: '', region: '', operatorHub: '', rider: '' })
     setAppliedFilters(null)
     setSearchTerm('')
-    // Force refresh to get clean data
-    fetchData()
     setCurrentPage(1)
   }
 
@@ -440,7 +396,7 @@ function Performance() {
       }
       
       // Refresh data from database to show newly imported records
-      await fetchData()
+      await fetchPageData(currentPage, filters)
     } catch (err) {
       console.error('File parsing error:', err)
       alert('Error parsing file: ' + err.message)
@@ -609,20 +565,23 @@ function Performance() {
     }
   }
 
-  // Client-side pagination - slice filteredData based on current page
-  const startIndex = (currentPage - 1) * itemsPerPage
-  const paginatedData = filteredData.slice(startIndex, startIndex + itemsPerPage)
+  // Paginated data is loaded from the server already
+  const paginatedData = filteredData
   const totalPages = Math.ceil(totalCount / itemsPerPage)
   
-  // Unique values for filters - fetch from API or use limited set
+  // Unique values for filters - derive from loaded rider metadata and current page data
+  const filterSource = useMemo(() => {
+    return [...allRiders, ...data].filter(item => item && (item.operator_hub || item.hub || item.region))
+  }, [allRiders, data])
+
   const uniqueHubs = useMemo(() => 
-    [...new Set(data.map(item => item.hub).filter(Boolean))],
-    [data]
+    [...new Set(filterSource.map(item => item.operator_hub || item.hub).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [filterSource]
   )
   
   const uniqueRegions = useMemo(() => 
-    [...new Set(data.map(item => item.region).filter(Boolean))],
-    [data]
+    [...new Set(filterSource.map(item => item.region).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [filterSource]
   )
 
   const handlePageChange = (page) => {
@@ -669,7 +628,8 @@ function Performance() {
     link.click()
   }
 
-  if (loading) {
+  // Show skeleton only on initial load before any data
+  if (loading && data.length === 0) {
     return (
       <div className="space-y-6 relative">
         {/* Skeleton Loading Screen */}
@@ -681,7 +641,11 @@ function Performance() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 relative">
+      {/* Subtle filtering indicator - non-blocking */}
+      {isFiltering && (
+        <div className="fixed top-0 left-0 right-0 h-1 bg-gradient-to-r from-maroon-600 to-maroon-400 animate-pulse z-50" />
+      )}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
         <div>
           <h1 className="text-xl font-bold text-white">Performance Management</h1>

@@ -181,25 +181,46 @@ $$ language 'plpgsql';
 CREATE OR REPLACE FUNCTION refresh_riders()
 RETURNS void AS $$
 BEGIN
-  -- Insert new riders from performance records that don't exist
-  INSERT INTO riders (rider_id, rider_name, operator_hub, status)
-  SELECT DISTINCT 
-    pr.rider_id,
-    pr.driver_name as rider_name,
-    pr.hub as operator_hub,
-    'Active'::VARCHAR(20) as status
-  FROM performance_records pr
-  LEFT JOIN riders r ON pr.rider_id = r.rider_id
-  WHERE r.rider_id IS NULL
-    AND pr.rider_id IS NOT NULL
-    AND pr.rider_id != '';
-    
-  -- Update existing riders' last_active date
-  UPDATE riders r
-  SET last_active = pr.date
-  FROM performance_records pr
-  WHERE r.rider_id = pr.rider_id
-    AND pr.date > COALESCE(r.last_active, '1900-01-01'::DATE);
+  WITH rider_agg AS (
+    SELECT
+      rider_id,
+      MIN(date) AS deployment_date,
+      MAX(date) AS last_active
+    FROM performance_records
+    WHERE rider_id IS NOT NULL
+      AND rider_id <> ''
+      AND date IS NOT NULL
+    GROUP BY rider_id
+  ), latest_rider AS (
+    SELECT DISTINCT ON (rider_id)
+      rider_id,
+      driver_name,
+      hub
+    FROM performance_records
+    WHERE rider_id IS NOT NULL
+      AND rider_id <> ''
+    ORDER BY rider_id, date DESC
+  ), merged AS (
+    SELECT
+      a.rider_id,
+      COALESCE(lr.driver_name, '') AS rider_name,
+      COALESCE(lr.hub, '') AS operator_hub,
+      'Active'::VARCHAR(20) AS status,
+      a.deployment_date,
+      a.last_active
+    FROM rider_agg a
+    LEFT JOIN latest_rider lr USING (rider_id)
+  )
+  INSERT INTO riders (rider_id, rider_name, operator_hub, status, deployment_date, last_active)
+  SELECT rider_id, rider_name, operator_hub, status, deployment_date, last_active
+  FROM merged
+  ON CONFLICT (rider_id) DO UPDATE
+  SET
+    rider_name = EXCLUDED.rider_name,
+    operator_hub = EXCLUDED.operator_hub,
+    status = EXCLUDED.status,
+    deployment_date = LEAST(COALESCE(riders.deployment_date, EXCLUDED.deployment_date), EXCLUDED.deployment_date),
+    last_active = GREATEST(COALESCE(riders.last_active, EXCLUDED.last_active), EXCLUDED.last_active);
 END;
 $$ language 'plpgsql';
 

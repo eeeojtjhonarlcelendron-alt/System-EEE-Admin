@@ -6,7 +6,7 @@ import {
   getDashboardMetrics,
   getDashboardStats,
   getRiderHubStats,
-  getPerformanceRecords,
+  getPerformanceRecordsPaginated,
   getRecentPerformanceRecords,
   getKpiRecords,
   getRecentKpiRecords,
@@ -272,7 +272,7 @@ function Dashboard() {
         currentProgress = 30
         
         // Stage 3: Fetch performance records (50%)
-        const performanceResult = await incrementProgress(currentProgress, 50, 'Loading performance records...', () => getPerformanceRecords())
+        const performanceResult = await incrementProgress(currentProgress, 50, 'Loading performance records...', () => getPerformanceRecordsPaginated(0, 100000))
         currentProgress = 50
         
         // Stage 4: Fetch KPI records (70%)
@@ -541,8 +541,8 @@ function Dashboard() {
       const [statsResult, hubResult, performanceResult, kpiResult, dashboardResult, ridersResult] = await Promise.all([
         getDashboardStats(),
         getRiderHubStats(),
-        getPerformanceRecords(), // Now optimized to load all data efficiently
-        getKpiRecords(), // Now optimized to load all data efficiently
+        getPerformanceRecordsPaginated(0, 100000),
+        getKpiRecords(),
         getDashboardMetrics(),
         getRiders()
       ])

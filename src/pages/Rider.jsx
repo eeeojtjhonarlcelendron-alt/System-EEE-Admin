@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Filter, Search, X, ChevronDown, UserCheck, UserX, Loader2 } from 'lucide-react'
-import { getRiders, getPerformanceRecords, getFuelManagementRiders } from '../lib/data'
+import { getRiders, getPerformanceRecordsPaginated, getFuelManagementRiders } from '../lib/data'
 import { SkeletonRider, ProgressBarLoader } from '../components/Skeleton'
 
 function Rider() {
@@ -46,7 +46,7 @@ function Rider() {
         currentProgress = 25
         
         // Stage 2: Fetch performance records (50%)
-        const performanceResult = await incrementProgress(currentProgress, 50, 'Loading performance records...', () => getPerformanceRecords())
+        const performanceResult = await incrementProgress(currentProgress, 50, 'Loading performance records...', () => getPerformanceRecordsPaginated(0, 100000))
         currentProgress = 50
         
         // Stage 3: Fetch fuel management riders (75%)
