@@ -254,6 +254,39 @@ export async function getPerformanceRecords(filters = {}) {
   return { data: allData, error: null }
 }
 
+export async function getPerformanceRecordsByRiderId(riderId) {
+  const batchSize = 1000
+  const allData = []
+  let offset = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('performance_records')
+      .select('*')
+      .eq('rider_id', riderId)
+      .order('date', { ascending: false })
+      .order('id', { ascending: false })
+      .range(offset, offset + batchSize - 1)
+
+    if (error) {
+      return { data: allData, error }
+    }
+
+    if (!data || data.length === 0) {
+      break
+    }
+
+    allData.push(...data)
+    if (data.length < batchSize) {
+      break
+    }
+
+    offset += batchSize
+  }
+
+  return { data: allData, error: null }
+}
+
 // Optimized function to fetch only recent performance data for dashboard
 export async function getRecentPerformanceRecords(days = 30, filters = {}) {
   console.log(`getRecentPerformanceRecords: Fetching last ${days} days...`)
