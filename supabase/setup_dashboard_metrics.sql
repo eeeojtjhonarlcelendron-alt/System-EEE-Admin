@@ -45,75 +45,55 @@ END $$;
 
 -- 2. Create function to refresh dashboard metrics
 CREATE OR REPLACE FUNCTION refresh_dashboard_metrics()
-RETURNS void AS $$
+RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
-  -- Delete old aggregated data (use WHERE true to satisfy PostgreSQL requirement)
-  DELETE FROM dashboard_metrics WHERE true;
+  -- Delete old aggregated data
+  DELETE FROM dashboard_metrics;
   
-  -- Insert aggregated metrics from Performance and KPI data
+  -- Get all unique date-hub combinations from both tables
+  WITH date_hub_pairs AS (
+    SELECT DISTINCT p.date, p.hub
+    FROM performance_records p
+    WHERE p.date IS NOT NULL AND p.hub IS NOT NULL
+    UNION
+    SELECT DISTINCT k.date, k.operator_hub as hub
+    FROM kpi_records k
+    WHERE k.date IS NOT NULL AND k.operator_hub IS NOT NULL
+  )
   INSERT INTO dashboard_metrics (date, hub, success_rate, riders, delivered, on_hold, productivity, clear_floor_rate, scorecard)
   SELECT 
-    COALESCE(p.date, k.date) as date,
-    COALESCE(p.hub, k.operator_hub) as hub,
-    -- Success Rate: from Performance (pecentage)
-    COALESCE(
-      (SELECT AVG(p2.pecentage) FROM performance_records p2 
-       WHERE p2.date = COALESCE(p.date, k.date) AND p2.hub = COALESCE(p.hub, k.operator_hub)),
-      0
-    ) as success_rate,
-    -- Riders: count unique rider_ids from Performance
-    (SELECT COUNT(DISTINCT p2.rider_id) FROM performance_records p2 
-     WHERE p2.date = COALESCE(p.date, k.date) AND p2.hub = COALESCE(p.hub, k.operator_hub)) as riders,
-    -- Delivered: AVERAGE from Performance
-    (SELECT AVG(p2.delivered) FROM performance_records p2 
-     WHERE p2.date = COALESCE(p.date, k.date) AND p2.hub = COALESCE(p.hub, k.operator_hub)) as delivered,
-    -- On-Hold: AVERAGE from Performance
-    (SELECT AVG(p2.onhold) FROM performance_records p2 
-     WHERE p2.date = COALESCE(p.date, k.date) AND p2.hub = COALESCE(p.hub, k.operator_hub)) as on_hold,
-    -- Productivity: AVERAGE of assigned from Performance
-    (SELECT AVG(p2.assigned) FROM performance_records p2 
-     WHERE p2.date = COALESCE(p.date, k.date) AND p2.hub = COALESCE(p.hub, k.operator_hub)) as productivity,
-    -- Clear Floor Rate: average cfr from KPI
-    (SELECT AVG(k2.cfr) FROM kpi_records k2 
-     WHERE k2.date = COALESCE(p.date, k.date) AND k2.operator_hub = COALESCE(p.hub, k.operator_hub)) as clear_floor_rate,
-    -- Scorecard: average score from KPI
-    (SELECT AVG(k2.score) FROM kpi_records k2 
-     WHERE k2.date = COALESCE(p.date, k.date) AND k2.operator_hub = COALESCE(p.hub, k.operator_hub)) as scorecard
-  FROM 
-    (SELECT DISTINCT date, hub FROM performance_records WHERE date IS NOT NULL AND hub IS NOT NULL) p
-  FULL OUTER JOIN 
-    (SELECT DISTINCT date, operator_hub FROM kpi_records WHERE date IS NOT NULL AND operator_hub IS NOT NULL) k
-  ON p.date = k.date AND p.hub = k.operator_hub
-  WHERE COALESCE(p.date, k.date) IS NOT NULL AND COALESCE(p.hub, k.operator_hub) IS NOT NULL
-  ON CONFLICT (date, hub) 
-  DO UPDATE SET
-    success_rate = COALESCE(EXCLUDED.success_rate, dashboard_metrics.success_rate),
-    riders = COALESCE(EXCLUDED.riders, dashboard_metrics.riders),
-    delivered = COALESCE(EXCLUDED.delivered, dashboard_metrics.delivered),
-    on_hold = COALESCE(EXCLUDED.on_hold, dashboard_metrics.on_hold),
-    productivity = COALESCE(EXCLUDED.productivity, dashboard_metrics.productivity),
-    clear_floor_rate = COALESCE(EXCLUDED.clear_floor_rate, dashboard_metrics.clear_floor_rate),
-    scorecard = COALESCE(EXCLUDED.scorecard, dashboard_metrics.scorecard),
-    updated_at = NOW();
+    dh.date,
+    dh.hub,
+    COALESCE(AVG(p.pecentage), 0) as success_rate,
+    COALESCE(COUNT(DISTINCT p.rider_id), 0) as riders,
+    COALESCE(AVG(p.delivered), 0) as delivered,
+    COALESCE(AVG(p.onhold), 0) as on_hold,
+    COALESCE(AVG(p.assigned), 0) as productivity,
+    COALESCE(AVG(k.cfr), 0) as clear_floor_rate,
+    COALESCE(AVG(k.score), 0) as scorecard
+  FROM date_hub_pairs dh
+  LEFT JOIN performance_records p ON dh.date = p.date AND dh.hub = p.hub
+  LEFT JOIN kpi_records k ON dh.date = k.date AND dh.hub = k.operator_hub
+  GROUP BY dh.date, dh.hub;
 END;
-$$ language 'plpgsql';
+$$;
 
 -- 3. Create trigger functions
 CREATE OR REPLACE FUNCTION trigger_refresh_dashboard_metrics_performance()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM refresh_dashboard_metrics();
   RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$;
 
 CREATE OR REPLACE FUNCTION trigger_refresh_dashboard_metrics_kpi()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM refresh_dashboard_metrics();
   RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$;
 
 -- 4. Create triggers (drop existing first to avoid errors)
 DROP TRIGGER IF EXISTS refresh_dashboard_metrics_after_performance_insert ON performance_records;

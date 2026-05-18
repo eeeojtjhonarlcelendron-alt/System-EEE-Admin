@@ -7,11 +7,10 @@ import {
   getDashboardStats,
   getRiderHubStats,
   getPerformanceRecordsPaginated,
-  getRecentPerformanceRecords,
-  getKpiRecords,
-  getRecentKpiRecords,
+  getKpiRecordsPaginated,
   getRiders,
-  getClusterLeaders
+  getClusterLeaders,
+  populateDashboardMetrics
 } from '../lib/data'
 import { getKPIMetricsByHub, getOverallKPIMetrics } from '../lib/kpiMetrics'
 import { 
@@ -230,19 +229,93 @@ function Dashboard() {
   const [hubFromDate, setHubFromDate] = useState('') // From date for Hub Level filter
   const [hubToDate, setHubToDate] = useState('') // To date for Hub Level filter
   const [hubDeliveryTrendTab, setHubDeliveryTrendTab] = useState('chart') // 'chart' or 'graph' for Hub Delivery Trend
+  const [hubDeliveryTrendRange, setHubDeliveryTrendRange] = useState('L7D') // 'L7D', 'P7D', 'MTD', or 'ALL'
   const [riderDeliveryTrendTab, setRiderDeliveryTrendTab] = useState('chart') // 'chart' or 'graph' for Rider Delivery Trend
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
+  const dashboardFetchStartedRef = useRef(false)
+  const clusterLeadersFetchedRef = useRef(false)
 
   const showMessage = (type, text) => {
     setMessage({ type, text })
     setTimeout(() => setMessage({ type: '', text: '' }), 5000)
   }
 
-  // Fetch all data
+  const processPerformanceChartData = useCallback((records) => {
+    const groupedByDate = (records || []).reduce((acc, item) => {
+      const date = item.date?.split('T')[0] || item.date
+      if (!date) return acc
+
+      if (!acc[date]) {
+        acc[date] = {
+          date,
+          delivered: 0,
+          deliveredCount: 0,
+          riders: 0,
+          ridersCount: 0,
+          on_hold: 0,
+          onHoldCount: 0,
+          success_rate: 0,
+          successRateCount: 0,
+          productivity: 0,
+          productivityCount: 0,
+          clear_floor_rate: 0,
+          clearFloorCount: 0,
+          score: 0,
+          scoreCount: 0
+        }
+      }
+
+      acc[date].delivered += parseInt(item.delivered) || 0
+      acc[date].deliveredCount++
+      acc[date].riders += parseInt(item.riders) || 0
+      acc[date].ridersCount++
+      acc[date].on_hold += parseInt(item.onhold || item.on_hold) || 0
+      acc[date].onHoldCount++
+
+      if (item.success_rate) {
+        acc[date].success_rate += parseFloat(item.success_rate)
+        acc[date].successRateCount++
+      }
+      if (item.productivity) {
+        acc[date].productivity += parseFloat(item.productivity)
+        acc[date].productivityCount++
+      }
+      if (item.clear_floor_rate) {
+        acc[date].clear_floor_rate += parseFloat(item.clear_floor_rate)
+        acc[date].clearFloorCount++
+      }
+      if (item.score) {
+        acc[date].score += parseFloat(item.score)
+        acc[date].scoreCount++
+      }
+
+      return acc
+    }, {})
+
+    const chartData = Object.values(groupedByDate)
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .map(item => ({
+        month: item.date?.slice(5) || item.date,
+        'Success Rate': item.successRateCount > 0 ? Math.round(item.success_rate / item.successRateCount) : 0,
+        'Riders': item.ridersCount > 0 ? Math.round(item.riders / item.ridersCount) : 0,
+        'Delivered': item.delivered,
+        'On-Hold': item.on_hold,
+        'Productivity': item.productivityCount > 0 ? Math.round(item.productivity / item.productivityCount) : 0,
+        'Clear Floor Rate': item.clearFloorCount > 0 ? Math.round(item.clear_floor_rate / item.clearFloorCount) : 0,
+        'Scorecard': item.scoreCount > 0 ? (item.score / item.scoreCount).toFixed(1) : 0
+      }))
+
+    setPerformanceData(chartData)
+  }, [])
+
+  // Fetch dashboard data
   useEffect(() => {
+    if (dashboardFetchStartedRef.current) return
+    dashboardFetchStartedRef.current = true
     async function fetchData() {
       try {
+        console.log('Dashboard fetchData start')
         setLoading(true)
         setLoadingProgress(0)
         setLoadingStage('Initializing data fetch...')
@@ -255,7 +328,7 @@ function Dashboard() {
           // Increment by 1% at a time
           for (let i = 1; i <= steps; i++) {
             setLoadingProgress(startProgress + i)
-            await new Promise(resolve => setTimeout(resolve, 20)) // Small delay for visibility
+            await new Promise(resolve => setTimeout(resolve, 5)) // Small delay for visibility
           }
           
           return await dataFetchFunction()
@@ -263,35 +336,44 @@ function Dashboard() {
         
         let currentProgress = 0
         
-        // Stage 1: Fetch basic stats (15%)
-        const statsResult = await incrementProgress(currentProgress, 15, 'Fetching dashboard statistics...', () => getDashboardStats())
-        currentProgress = 15
+        // OPTIMIZATION: Ensure aggregated metrics table is populated on startup
+        await incrementProgress(currentProgress, 5, 'Preparing data cache...', () => populateDashboardMetrics())
+        currentProgress = 5
         
-        // Stage 2: Fetch hub stats (30%)
-        const hubResult = await incrementProgress(currentProgress, 30, 'Fetching hub performance data...', () => getRiderHubStats())
-        currentProgress = 30
+        // Stage 1: Fetch basic stats (20%)
+        const statsResult = await incrementProgress(currentProgress, 20, 'Fetching dashboard statistics...', () => getDashboardStats())
+        currentProgress = 20
         
-        // Stage 3: Fetch performance records (50%)
-        const performanceResult = await incrementProgress(currentProgress, 50, 'Loading performance records...', () => getPerformanceRecordsPaginated(0, 100000))
+        // Stage 2: Fetch hub stats (35%)
+        const hubResult = await incrementProgress(currentProgress, 35, 'Fetching hub performance data...', () => getRiderHubStats())
+        currentProgress = 35
+        
+        // Stage 3: Fetch dashboard metrics (pre-aggregated, very fast!) (50%)
+        // This replaces the old Stage 3 & 4 which fetched raw data for ~50% of the load time
+        const dashboardResult = await incrementProgress(currentProgress, 50, 'Fetching dashboard metrics...', () => getDashboardMetrics())
         currentProgress = 50
         
-        // Stage 4: Fetch KPI records (70%)
-        const kpiResult = await incrementProgress(currentProgress, 70, 'Loading KPI data...', () => getKpiRecords())
-        currentProgress = 70
+        // Stage 4: Fetch riders data (65%)
+        const ridersResult = await incrementProgress(currentProgress, 65, 'Loading rider information...', () => getRiders())
+        currentProgress = 65
         
-        // Stage 5: Fetch dashboard metrics (85%)
-        const dashboardResult = await incrementProgress(currentProgress, 85, 'Fetching dashboard metrics...', () => getDashboardMetrics())
+        // Stage 5: Fetch KPI metrics by hub (using optimized RPC) (75%)
+        const kpiMetricsResult = await incrementProgress(currentProgress, 75, 'Fetching KPI metrics by hub...', () => getKPIMetricsByHub())
+        currentProgress = 75
+        
+        // Stage 6: Fetch overall KPI metrics (using optimized RPC) (85%)
+        const overallKpiResult = await incrementProgress(currentProgress, 85, 'Fetching overall KPI metrics...', () => getOverallKPIMetrics())
         currentProgress = 85
         
-        // Stage 6: Fetch riders data (95%)
-        const ridersResult = await incrementProgress(currentProgress, 95, 'Loading rider information...', () => getRiders())
+        // Stage 7: Fetch raw KPI records for KPI distribution charts (safe limited page) (95%)
+        const kpiPageResult = await incrementProgress(currentProgress, 95, 'Fetching KPI records for distribution chart...', () => getKpiRecordsPaginated(0, 1000))
         currentProgress = 95
         
         // Final stage: Processing (100%)
         setLoadingStage('Processing data...')
         for (let i = 96; i <= 100; i++) {
           setLoadingProgress(i)
-          await new Promise(resolve => setTimeout(resolve, 20))
+          await new Promise(resolve => setTimeout(resolve, 5))
         }
 
         if (statsResult.data) {
@@ -299,117 +381,34 @@ function Dashboard() {
         }
         
         if (dashboardResult.data) {
+          console.log('Dashboard metrics loaded:', dashboardResult.data?.length || 0, 'rows')
+          if (dashboardResult.data?.length > 0) {
+            console.log('Sample dashboard metric:', dashboardResult.data[0])
+          }
           setDashboardMetrics(dashboardResult.data)
           
-          // Group dashboard metrics by date for charts
-          const groupedByDate = dashboardResult.data.reduce((acc, item) => {
-              const date = item.date?.split('T')[0] || item.date
-              if (!acc[date]) {
-                acc[date] = { 
-                  date, 
-                  delivered: 0, 
-                  deliveredCount: 0,
-                  riders: 0,
-                  ridersCount: 0,
-                  on_hold: 0,
-                  onHoldCount: 0,
-                  success_rate: 0,
-                  successRateCount: 0,
-                  productivity: 0,
-                  productivityCount: 0,
-                  clear_floor_rate: 0,
-                  clearFloorCount: 0,
-                  scorecard: 0,
-                  scoreCount: 0
-                }
-              }
-              
-              // Sum up counts
-              acc[date].delivered += parseInt(item.delivered) || 0
-              acc[date].deliveredCount++
-              
-              acc[date].riders += parseInt(item.riders) || 0
-              acc[date].ridersCount++
-              
-              acc[date].on_hold += parseInt(item.on_hold) || 0
-              acc[date].onHoldCount++
-              
-              // Average percentages
-              if (item.success_rate) {
-                acc[date].success_rate += parseFloat(item.success_rate) * 100
-                acc[date].successRateCount++
-              }
-              if (item.productivity) {
-                acc[date].productivity += parseFloat(item.productivity)
-                acc[date].productivityCount++
-              }
-              if (item.clear_floor_rate) {
-                acc[date].clear_floor_rate += parseFloat(item.clear_floor_rate)
-                acc[date].clearFloorCount++
-              }
-              if (item.scorecard) {
-                acc[date].scorecard += parseFloat(item.scorecard)
-                acc[date].scoreCount++
-              }
-              
-              return acc
-            }, {})
-            
-            const chartData = Object.values(groupedByDate)
-              .sort((a, b) => new Date(a.date) - new Date(b.date))
-              .slice(-12) // Last 12 data points
-              .map(item => ({
-                month: item.date?.slice(5) || item.date, // Show MM-DD
-                'Success Rate': item.successRateCount > 0 ? Math.round(item.success_rate / item.successRateCount) : 0,
-                'Riders': Math.round(item.riders / item.ridersCount),
-                'Delivered': Math.round(item.delivered / item.deliveredCount),
-                'On-Hold': Math.round(item.on_hold / item.onHoldCount),
-                'Productivity': item.productivityCount > 0 ? Math.round(item.productivity / item.productivityCount) : 0,
-                'Clear Floor Rate': item.clearFloorCount > 0 ? Math.round(item.clear_floor_rate / item.clearFloorCount) : 0,
-                'Scorecard': item.scoreCount > 0 ? (item.scorecard / item.scoreCount).toFixed(1) : 0
-              }))
-            
-            setPerformanceData(chartData)
+          // Transform dashboard metrics into chart data
+          // Each dashboard metric is already aggregated by date and hub
+          const chartData = dashboardResult.data
+            .sort((a, b) => new Date(a.date) - new Date(b.date))
+            .map(item => ({
+              month: item.date?.slice(5) || item.date, // Show MM-DD
+              'Success Rate': Math.round(parseFloat(item.success_rate) * 100) || 0,
+              'Riders': item.riders || 0,
+              'Delivered': Math.round(parseFloat(item.delivered)) || 0,
+              'On-Hold': Math.round(parseFloat(item.on_hold)) || 0,
+              'Productivity': Math.round(parseFloat(item.productivity)) || 0,
+              'Clear Floor Rate': Math.round(parseFloat(item.clear_floor_rate)) || 0,
+              'Scorecard': parseFloat(item.scorecard).toFixed(1) || 0
+            }))
+          
+          setPerformanceData(chartData)
         }
         
         if (ridersResult.data) {
-          // Enrich riders data with deployment dates from performance records
-          const performanceData = performanceResult.data || []
-          
-          const ridersWithDeploymentDate = ridersResult.data.map(rider => {
-            // Find all performance records for this rider
-            const riderRecords = performanceData.filter(p => 
-              p.rider_id === rider.rider_id || 
-              p.driver_name === rider.rider_name ||
-              p.operator_id === rider.rider_id
-            )
-            
-            // Get the earliest date (deployment date) and latest date (last active)
-            let deploymentDate = rider.deployment_date || 'N/A'
-            let lastActiveDate = rider.last_active || 'N/A'
-            
-            if (riderRecords.length > 0) {
-              const sortedDates = riderRecords
-                .map(p => p.date)
-                .filter(Boolean)
-                .sort((a, b) => new Date(a) - new Date(b))
-                
-              if (sortedDates.length > 0) {
-                // Earliest date = deployment date
-                deploymentDate = sortedDates[0].split('T')[0] || sortedDates[0]
-                // Latest date = last active
-                lastActiveDate = sortedDates[sortedDates.length - 1].split('T')[0] || sortedDates[sortedDates.length - 1]
-              }
-            }
-            
-            return {
-              ...rider,
-              deployment_date: deploymentDate,
-              last_active: lastActiveDate
-            }
-          })
-          
-          setRidersData(ridersWithDeploymentDate)
+          // No need to enrich with performance records - just use as-is
+          // The deployment_date and last_active should already be in riders table
+          setRidersData(ridersResult.data)
         }
         
         if (hubResult.data) {
@@ -429,103 +428,26 @@ function Dashboard() {
           setHubPerformance(hubPerf)
         }
         
-        if (performanceResult.data) {
-          // Store raw performance records for Riders No Route calculation
-          setPerformanceRecords(performanceResult.data)
-          // Transform data for the chart - group by date and calculate averages for each metric
-          const groupedByDate = performanceResult.data.reduce((acc, item) => {
-            const date = item.date?.split('T')[0] || item.date
-            if (!acc[date]) {
-              acc[date] = { 
-                date, 
-                delivered: 0, 
-                deliveredCount: 0,
-                riders: 0,
-                ridersCount: 0,
-                on_hold: 0,
-                onHoldCount: 0,
-                success_rate: 0,
-                successRateCount: 0,
-                productivity: 0,
-                productivityCount: 0,
-                clear_floor_rate: 0,
-                clearFloorCount: 0,
-                score: 0,
-                scoreCount: 0
-              }
-            }
-            
-            // Sum up counts
-            acc[date].delivered += parseInt(item.delivered) || 0
-            acc[date].deliveredCount++
-            
-            acc[date].riders += parseInt(item.riders) || 0
-            acc[date].ridersCount++
-            
-            acc[date].on_hold += parseInt(item.on_hold) || 0
-            acc[date].onHoldCount++
-            
-            // Average percentages
-            if (item.success_rate) {
-              acc[date].success_rate += parseFloat(item.success_rate) * 100
-              acc[date].successRateCount++
-            }
-            if (item.productivity) {
-              acc[date].productivity += parseFloat(item.productivity)
-              acc[date].productivityCount++
-            }
-            if (item.clear_floor_rate) {
-              acc[date].clear_floor_rate += parseFloat(item.clear_floor_rate)
-              acc[date].clearFloorCount++
-            }
-            if (item.score) {
-              acc[date].score += parseFloat(item.score)
-              acc[date].scoreCount++
-            }
-            
-            return acc
-          }, {})
-          
-          const chartData = Object.values(groupedByDate)
-            .sort((a, b) => new Date(a.date) - new Date(b.date))
-            .slice(-12) // Last 12 data points
-            .map(item => ({
-              month: item.date?.slice(5) || item.date, // Show MM-DD
-              'Success Rate': item.successRateCount > 0 ? Math.round(item.success_rate / item.successRateCount) : 0,
-              'Riders': Math.round(item.riders / item.ridersCount),
-              'Delivered': item.delivered,
-              'On-Hold': item.on_hold,
-              'Productivity': item.productivityCount > 0 ? Math.round(item.productivity / item.productivityCount) : 0,
-              'Clear Floor Rate': item.clearFloorCount > 0 ? Math.round(item.clear_floor_rate / item.clearFloorCount) : 0,
-              'Scorecard': item.scoreCount > 0 ? (item.score / item.scoreCount).toFixed(1) : 0
-            }))
-          
-          setPerformanceData(chartData)
+        if (kpiMetricsResult.data) {
+          setKpiMetricsByHub(kpiMetricsResult.data)
         }
         
-        if (kpiResult.data) {
-          setKpiData(kpiResult.data)
-          // Extract unique sub-regions from KPI data
-          const subRegions = [...new Set(kpiResult.data.map(item => item.sub_region).filter(Boolean))]
+        if (overallKpiResult.data) {
+          setOverallKpiMetrics(overallKpiResult.data)
+        }
+
+        if (kpiPageResult?.data) {
+          setKpiData(kpiPageResult.data)
+          const subRegions = [...new Set(kpiPageResult.data.map(item => item.sub_region).filter(Boolean))]
           setUniqueRegions(subRegions)
-          
-          // Fetch KPI metrics by hub
-          const kpiMetricsResult = await getKPIMetricsByHub()
-          if (kpiMetricsResult.data) {
-            setKpiMetricsByHub(kpiMetricsResult.data)
-          }
-          
-          // Fetch overall KPI metrics
-          const overallKpiResult = await getOverallKPIMetrics()
-          if (overallKpiResult.data) {
-            setOverallKpiMetrics(overallKpiResult.data)
-          }
         }
       } catch (error) {
-        // Error fetching dashboard data
+        console.error('Dashboard fetchData error:', error)
+        setMessage('error', 'Failed to load dashboard data. Please refresh.')
+      } finally {
+        setLoading(false)
+        console.log('Dashboard fetchData complete')
       }
-      
-      setLoading(false)
     }
     
     fetchData()
@@ -538,11 +460,17 @@ function Dashboard() {
     setIsRefreshing(true)
     
     try {
-      const [statsResult, hubResult, performanceResult, kpiResult, dashboardResult, ridersResult] = await Promise.all([
+      // First populate the dashboard metrics table with aggregated data
+      const populateResult = await populateDashboardMetrics()
+      if (populateResult.error) {
+        console.warn('Error populating dashboard metrics:', populateResult.error)
+      }
+      
+      const [statsResult, hubResult, performancePageResult, kpiPageResult, dashboardResult, ridersResult] = await Promise.all([
         getDashboardStats(),
         getRiderHubStats(),
-        getPerformanceRecordsPaginated(0, 100000),
-        getKpiRecords(),
+        getPerformanceRecordsPaginated(0, 1000),
+        getKpiRecordsPaginated(0, 1000),
         getDashboardMetrics(),
         getRiders()
       ])
@@ -553,6 +481,7 @@ function Dashboard() {
       
       if (dashboardResult.data) {
         setDashboardMetrics(dashboardResult.data)
+        processPerformanceChartData(dashboardResult.data)
       }
       
       if (ridersResult.data) {
@@ -571,13 +500,14 @@ function Dashboard() {
         setHubPerformance(hubPerf)
       }
       
-      if (performanceResult.data) {
-        setPerformanceRecords(performanceResult.data)
+      if (performancePageResult.data) {
+        setPerformanceRecords(performancePageResult.data)
+        processPerformanceChartData(performancePageResult.data)
       }
       
-      if (kpiResult.data) {
-        setKpiData(kpiResult.data)
-        const subRegions = [...new Set(kpiResult.data.map(item => item.sub_region).filter(Boolean))]
+      if (kpiPageResult.data) {
+        setKpiData(kpiPageResult.data)
+        const subRegions = [...new Set(kpiPageResult.data.map(item => item.sub_region).filter(Boolean))]
         setUniqueRegions(subRegions)
       }
     } catch (error) {
@@ -585,7 +515,7 @@ function Dashboard() {
     } finally {
       setIsRefreshing(false)
     }
-  }, [isRefreshing])
+  }, [isRefreshing, processPerformanceChartData])
 
   // Filter data based on selections
   const filteredHubPerformance = useMemo(() => {
@@ -715,6 +645,8 @@ function Dashboard() {
 
   // Fetch cluster leaders on mount
   useEffect(() => {
+    if (clusterLeadersFetchedRef.current) return
+    clusterLeadersFetchedRef.current = true
     async function fetchClusterLeaders() {
       console.log('Fetching cluster leaders...')
       const { data, error } = await getClusterLeaders()
@@ -762,19 +694,6 @@ function Dashboard() {
   // Filtered stats based on hub/cluster and date selection - using dashboard_metrics
   // In Overall view with selectedCluster, shows all hubs in that cluster
   const filteredStats = useMemo(() => {
-    // For hub view: if no filters selected, show 0
-    if (dashboardView === 'hub' && !selectedHub && !selectedDate && !hubFromDate && !hubToDate) {
-      return {
-        successRate: 0,
-        activeRiders: 0,
-        delivered: 0,
-        onHold: 0,
-        productivity: 0,
-        clearFloorRate: 0,
-        scorecard: '0.0'
-      }
-    }
-    
     // For overall view: if no cluster leader selected, show 0
     if (dashboardView === 'overall' && !selectedCluster) {
       return {
@@ -791,6 +710,57 @@ function Dashboard() {
     // For overall view with cluster leader selected, continue with data calculation
     // Don't return early - let the calculation proceed
     
+    const normalizeHub = value => String(value || '').trim().toLowerCase()
+    const selectedHubNorm = normalizeHub(selectedHub)
+
+    // When a specific hub is selected in hub view, calculate stats from dashboard_metrics directly.
+    if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
+      let hubMetrics = dashboardMetrics.filter(m => normalizeHub(m.hub) === selectedHubNorm)
+
+      if (hubFromDate && hubToDate) {
+        hubMetrics = hubMetrics.filter(m => {
+          const recordDate = m.date?.split('T')[0] || m.date
+          return recordDate >= hubFromDate && recordDate <= hubToDate
+        })
+      } else if (selectedDate) {
+        hubMetrics = hubMetrics.filter(m => {
+          const recordDate = m.date?.split('T')[0] || m.date
+          return recordDate === selectedDate
+        })
+      }
+
+      if (hubMetrics.length === 0) {
+        return {
+          successRate: 0,
+          activeRiders: 0,
+          delivered: 0,
+          onHold: 0,
+          productivity: 0,
+          clearFloorRate: 0,
+          scorecard: '0.0'
+        }
+      }
+
+      const total = hubMetrics.length
+      const avgSuccessRate = Math.round(hubMetrics.reduce((sum, item) => sum + ((item.success_rate || 0) * 100), 0) / total)
+      const avgRiders = Math.round(hubMetrics.reduce((sum, item) => sum + (item.riders || 0), 0) / total)
+      const avgDelivered = Math.round(hubMetrics.reduce((sum, item) => sum + (item.delivered || 0), 0) / total)
+      const avgOnHold = Math.round(hubMetrics.reduce((sum, item) => sum + (item.on_hold || 0), 0) / total)
+      const avgProductivity = Math.round(hubMetrics.reduce((sum, item) => sum + (item.productivity || 0), 0) / total)
+      const avgClearFloor = Math.round(hubMetrics.reduce((sum, item) => sum + (item.clear_floor_rate || 0), 0) / total)
+      const avgScorecard = (hubMetrics.reduce((sum, item) => sum + (item.scorecard || 0), 0) / total).toFixed(1)
+
+      return {
+        successRate: avgSuccessRate,
+        activeRiders: avgRiders,
+        delivered: avgDelivered,
+        onHold: avgOnHold,
+        productivity: avgProductivity,
+        clearFloorRate: avgClearFloor,
+        scorecard: avgScorecard
+      }
+    }
+
     // For hub view with filters: calculate from Performance, KPI, and Rider pages
     if (dashboardView === 'hub' && (selectedHub || selectedDate || hubFromDate || hubToDate)) {
       let filteredPerformance = performanceRecords
@@ -798,8 +768,8 @@ function Dashboard() {
       
       // Filter by hub
       if (selectedHub && selectedHub !== 'All Hubs') {
-        filteredPerformance = filteredPerformance.filter(p => p.hub === selectedHub)
-        filteredKPI = filteredKPI.filter(k => k.operator_hub === selectedHub)
+        filteredPerformance = filteredPerformance.filter(p => normalizeHub(p.hub) === selectedHubNorm)
+        filteredKPI = filteredKPI.filter(k => normalizeHub(k.operator_hub || k.hub) === selectedHubNorm)
       }
       
       // Filter by date range
@@ -1079,20 +1049,6 @@ function Dashboard() {
       return result
     }
     
-    // For hub view: if no filters selected, show 0
-    if (dashboardView === 'hub' && !selectedHub && !selectedDate && !hubFromDate && !hubToDate) {
-      return [
-        { name: 'Clear Floor Rate', value: 0 },
-        { name: 'Success Rate', value: 0 },
-        { name: 'Aging 4 Days', value: 0 },
-        { name: 'Line Haul', value: 0 },
-        { name: 'COD Remittance', value: 0 },
-        { name: 'EOD Compliance', value: 0 },
-        { name: 'RTS', value: 0 },
-        { name: 'Loss', value: 0 }
-      ]
-    }
-    
     // For overall view: if no cluster leader selected, show 0
     if (dashboardView === 'overall' && !selectedCluster) {
       return [
@@ -1119,7 +1075,11 @@ function Dashboard() {
     }
     // In Hub view with selectedHub: filter by specific hub
     else if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
-      filteredKpiData = filteredKpiData.filter(item => item.operator_hub === selectedHub)
+      const selectedHubNorm = String(selectedHub).trim().toLowerCase()
+      filteredKpiData = filteredKpiData.filter(item => {
+        const itemHubNorm = String(item.operator_hub || '').trim().toLowerCase()
+        return itemHubNorm === selectedHubNorm
+      })
     }
     
     // Filter by date range (From/To dates take priority in Hub view)
@@ -1165,110 +1125,155 @@ function Dashboard() {
 // In Overall view with selectedCluster, shows chart data for all hubs in that cluster
 const filteredChartData = useMemo(() => {
   
-  // For hub view: if no hub selected, return empty array (no data shown)
-  if (dashboardView === 'hub' && !selectedHub && !selectedDate && !hubFromDate && !hubToDate) {
-    return []
-  }
-  
   // For overall view: if no cluster leader selected, return empty array
   if (dashboardView === 'overall' && !selectedCluster) {
     return []
   }
-  
+
   // For overall view with cluster leader selected, continue with data calculation
   // Don't return early - let the calculation proceed
 
-  // For hub view: use same data sources as metric cards
-  if (dashboardView === 'hub' && (selectedHub || selectedDate || hubFromDate || hubToDate)) {
-    const aggregatedData = new Map()
-
-    // Process Performance Records
-    let filteredPerformance = performanceRecords
-    let filteredKPI = kpiData
-
-    // Filter by hub
-    if (selectedHub && selectedHub !== 'All Hubs') {
-      filteredPerformance = filteredPerformance.filter(p => p.hub === selectedHub)
-      filteredKPI = filteredKPI.filter(k => k.operator_hub === selectedHub)
+  const getDashboardMetricChartData = () => {
+    console.log('getDashboardMetricChartData called with dashboardMetrics:', dashboardMetrics?.length || 0, 'rows')
+    
+    if (dashboardView === 'hub' && (!selectedHub || selectedHub === 'All Hubs')) {
+      console.log('Hub view without selected hub: returning empty chart data')
+      return []
     }
 
-    // Filter by date range
-    if (hubFromDate && hubToDate) {
-      filteredPerformance = filteredPerformance.filter(p => {
-        const recordDate = p.date?.split('T')[0] || p.date
-        return recordDate >= hubFromDate && recordDate <= hubToDate
+    let filtered = dashboardMetrics
+    const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
+    const selectedDateNorm = String(selectedDate || '').split('T')[0]
+
+    console.log('Filtering with selectedHub:', selectedHub, 'normalized:', selectedHubNorm)
+    console.log('Available hubs in dashboardMetrics:', [...new Set(dashboardMetrics.map(d => d.hub))])
+
+    if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
+      filtered = filtered.filter(item => {
+        const itemHubNorm = String(item.hub || '').trim().toLowerCase()
+        return itemHubNorm === selectedHubNorm
       })
-      filteredKPI = filteredKPI.filter(k => {
-        const recordDate = k.date?.split('T')[0] || k.date
-        return recordDate >= hubFromDate && recordDate <= hubToDate
-      })
-    } else if (selectedDate) {
-      filteredPerformance = filteredPerformance.filter(p => {
-        const recordDate = p.date?.split('T')[0] || p.date
-        return recordDate === selectedDate
-      })
-      filteredKPI = filteredKPI.filter(k => {
-        const recordDate = k.date?.split('T')[0] || k.date
-        return recordDate === selectedDate
-      })
+      console.log('Filtered by hub, remaining rows:', filtered.length)
+      if (filtered.length > 0) {
+        console.log('Sample filtered row:', filtered[0])
+      }
     }
 
-    // Aggregate data by date
-    filteredPerformance.forEach(record => {
-      const date = record.date?.split('T')[0] || record.date
-      if (!date) return
+    if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL' && filtered.length > 0) {
+      const parsedDates = filtered
+        .map(item => String(item.date || '').split('T')[0])
+        .filter(Boolean)
+      const latestDateString = parsedDates.reduce((latest, current) => {
+        return current > latest ? current : latest
+      }, parsedDates[0] || '')
 
-      if (!aggregatedData.has(date)) {
-        aggregatedData.set(date, {
-          delivered: 0,
-          onHold: 0,
-          assigned: 0,
-          riders: new Set(),
-          successRates: [],
-          productivity: 0,
-          clearFloorRate: 0,
-          scorecard: 0
+      const parseDateString = (dateStr) => {
+        const [year, month, day] = String(dateStr || '').split('-').map(Number)
+        if (Number.isInteger(year) && Number.isInteger(month) && Number.isInteger(day)) {
+          return new Date(year, month - 1, day)
+        }
+        return new Date(dateStr)
+      }
+
+      const formatLocalDate = (date) => {
+        const pad = (value) => String(value).padStart(2, '0')
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+      }
+
+      if (latestDateString) {
+        const latestDateObj = parseDateString(latestDateString)
+        let rangeStart = new Date(latestDateObj)
+        let rangeEnd = new Date(latestDateObj)
+
+        if (hubDeliveryTrendRange === 'L7D') {
+          rangeStart.setDate(latestDateObj.getDate() - 6)
+        } else if (hubDeliveryTrendRange === 'P7D') {
+          rangeEnd.setDate(latestDateObj.getDate() - 7)
+          rangeStart = new Date(rangeEnd)
+          rangeStart.setDate(rangeEnd.getDate() - 6)
+        } else if (hubDeliveryTrendRange === 'MTD') {
+          rangeStart = new Date(latestDateObj.getFullYear(), latestDateObj.getMonth(), 1)
+        }
+
+        const formattedStart = formatLocalDate(rangeStart)
+        const formattedEnd = formatLocalDate(rangeEnd)
+        console.log('Applying hub trend range:', hubDeliveryTrendRange, formattedStart, 'to', formattedEnd)
+
+        filtered = filtered.filter(item => {
+          const itemDate = String(item.date || '').split('T')[0]
+          return itemDate >= formattedStart && itemDate <= formattedEnd
         })
       }
+    } else if (hubFromDate && hubToDate) {
+      console.log('Filtering by date range:', hubFromDate, 'to', hubToDate)
+      filtered = filtered.filter(item => {
+        const itemDate = String(item.date || '').split('T')[0]
+        return itemDate >= hubFromDate && itemDate <= hubToDate
+      })
+    } else if (selectedDate) {
+      filtered = filtered.filter(item => {
+        const itemDate = String(item.date || '').split('T')[0]
+        return itemDate === selectedDateNorm
+      })
+    }
 
-      const data = aggregatedData.get(date)
-      data.delivered += parseInt(record.delivered) || 0
-      data.onHold += parseInt(record.onhold) || 0
-      data.assigned += parseInt(record.assigned) || 0
-      data.riders.add(record.rider_id)
+    const aggregated = {}
 
-      // Calculate individual success rate
-      if (record.assigned > 0) {
-        const successRate = (parseInt(record.delivered) / parseInt(record.assigned)) * 100
-        data.successRates.push(successRate)
+    filtered.forEach(item => {
+      const date = item.date?.split('T')[0] || item.date
+      if (!date) return
+
+      if (!aggregated[date]) {
+        aggregated[date] = {
+          date,
+          count: 0,
+          delivered: 0,
+          riders: 0,
+          on_hold: 0,
+          success_rate: 0,
+          productivity: 0,
+          clear_floor_rate: 0,
+          scorecard: 0
+        }
       }
+
+      const entry = aggregated[date]
+      entry.delivered += Number(item.delivered) || 0
+      entry.riders += Number(item.riders) || 0
+      entry.on_hold += Number(item.on_hold) || 0
+      entry.success_rate += Number(item.success_rate) || 0
+      entry.productivity += Number(item.productivity) || 0
+      entry.clear_floor_rate += Number(item.clear_floor_rate) || 0
+      entry.scorecard += Number(item.scorecard) || 0
+      entry.count += 1
     })
 
-    // Process KPI Records
-    filteredKPI.forEach(record => {
-      const date = record.date?.split('T')[0] || record.date
-      if (!date || !aggregatedData.has(date)) return
-
-      const data = aggregatedData.get(date)
-      data.clearFloorRate += parseFloat(record.cfr) || 0
-      data.scorecard += parseFloat(record.sr) || 0
-    })
-
-    // Convert to array and calculate averages
-    const result = Array.from(aggregatedData.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, data]) => ({
-        month: date,
-        'Success Rate': data.successRates.length > 0 ? Math.round(data.successRates.reduce((sum, rate) => sum + rate, 0) / data.successRates.length) : 0,
-        'Riders': data.riders.size,
-        'Delivered': data.delivered,
-        'On-Hold': data.onHold,
-        'Productivity': data.riders.size > 0 ? Math.round(data.assigned / data.riders.size) : 0,
-        'Clear Floor Rate': data.riders.size > 0 ? Math.round(data.clearFloorRate / data.riders.size) : 0,
-        'Scorecard': data.riders.size > 0 ? (data.scorecard / data.riders.size).toFixed(1) : 0
+    const chartData = Object.values(aggregated)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(item => ({
+        month: item.date,
+        'Success Rate': item.count > 0 ? Number(((item.success_rate / item.count) * 100).toFixed(1)) : 0,
+        'Riders': item.riders,
+        'Delivered': item.delivered,
+        'On-Hold': item.on_hold,
+        'Productivity': item.count > 0 ? Number((item.productivity / item.count).toFixed(1)) : 0,
+        'Clear Floor Rate': item.count > 0 ? Number((item.clear_floor_rate / item.count).toFixed(1)) : 0,
+        'Scorecard': item.count > 0 ? Number((item.scorecard / item.count).toFixed(1)) : 0
       }))
+    
+    console.log('Final chart data:', chartData?.length || 0, 'rows')
+    if (chartData?.length > 0) {
+      console.log('Sample chart row:', chartData[0])
+    }
+    
+    return chartData
+  }
 
-    return result
+  if (dashboardView === 'hub') {
+    if (!selectedHub || selectedHub === 'All Hubs') {
+      return []
+    }
+    return getDashboardMetricChartData()
   }
 
   // For overall view: process data from cluster leader assigned hubs with P7D/L7D logic
@@ -1406,7 +1411,25 @@ const filteredChartData = useMemo(() => {
 
     return []
   }
-  }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedCluster, hubToClusterMap, hubFromDate, hubToDate, selectedCategory])
+
+  return []
+}, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedCluster, hubToClusterMap, hubFromDate, hubToDate, selectedCategory, hubDeliveryTrendRange])
+
+const chartDomain = useMemo(() => {
+  if (!filteredChartData || filteredChartData.length === 0) {
+    return [0, 'auto']
+  }
+
+  const values = filteredChartData.map(item => Number(item[selectedCategory]) || 0)
+  const maxValue = Math.max(...values, 0)
+
+  if (['Success Rate', 'Productivity', 'Clear Floor Rate', 'Scorecard'].includes(selectedCategory)) {
+    const upper = Math.max(10, Math.ceil(maxValue * 1.2))
+    return [0, upper]
+  }
+
+  return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
+}, [filteredChartData, selectedCategory])
 
   // Close hub dropdown when clicking outside
   useEffect(() => {
@@ -2725,49 +2748,49 @@ const filteredChartData = useMemo(() => {
       )}
 
       {/* KPI Stats Row - Symmetrical 7 Metrics - Hub Level Only */}
-      {dashboardView === 'hub' && (
+      {dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs' && (
       <div className="flex gap-2">
         <CompactStatCard 
           title="Success Rate" 
           value={`${filteredStats.successRate || 0}%`} 
           icon={CheckCircle}
-          color="bg-green-600"
+          accentColor="bg-green-600"
         />
         <CompactStatCard 
           title="Riders" 
           value={filteredStats.activeRiders?.toLocaleString() || '0'} 
           icon={Users}
-          color="bg-blue-600"
+          accentColor="bg-blue-600"
         />
         <CompactStatCard 
           title="Delivered" 
           value={filteredStats.delivered?.toLocaleString() || '0'} 
           icon={Package}
-          color="bg-emerald-600"
+          accentColor="bg-emerald-600"
         />
         <CompactStatCard 
           title="On-Hold" 
           value={filteredStats.onHold?.toLocaleString() || '0'} 
           icon={PauseCircle}
-          color="bg-orange-600"
+          accentColor="bg-orange-600"
         />
         <CompactStatCard 
           title="Productivity" 
           value={`${filteredStats.productivity || 0}`} 
           icon={TrendingUp}
-          color="bg-cyan-600"
+          accentColor="bg-cyan-600"
         />
         <CompactStatCard 
           title="Clear Floor" 
           value={`${filteredStats.clearFloorRate || 0}%`} 
           icon={Sparkles}
-          color="bg-indigo-600"
+          accentColor="bg-indigo-600"
         />
         <CompactStatCard 
           title="Scorecard" 
           value={filteredStats.scorecard || '0.0'} 
           icon={Target}
-          color="bg-purple-600"
+          accentColor="bg-purple-600"
         />
       </div>
       )}
@@ -2806,6 +2829,17 @@ const filteredChartData = useMemo(() => {
                   Graph
                 </button>
               </div>
+              {/* Trend Range Filter */}
+              <select 
+                value={hubDeliveryTrendRange}
+                onChange={(e) => setHubDeliveryTrendRange(e.target.value)}
+                className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+              >
+                <option value="ALL">All Data</option>
+                <option value="L7D">Last 7 Days</option>
+                <option value="P7D">Prior 7 Days</option>
+                <option value="MTD">Month to Date</option>
+              </select>
               {/* Category Filter */}
               <select 
                 value={selectedCategory}
@@ -2825,57 +2859,91 @@ const filteredChartData = useMemo(() => {
           <ResponsiveContainer width="100%" height={320}>
             {filteredChartData.length > 0 ? (
               hubDeliveryTrendTab === 'chart' ? (
-                <AreaChart key={filteredChartData.length} data={filteredChartData} layout="horizontal">
-                  <defs>
-                    <linearGradient id="colorDeliveries" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#a83030" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#a83030" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
-                  <XAxis 
-                    dataKey="month" 
-                    stroke="#94a3b8" 
-                    fontSize={6} 
-                    tickLine={false} 
-                    axisLine={false}
-                    interval={0}
-                    angle={-45}
-                    textAnchor="end"
-                    height={80}
-                  />
-                  <YAxis 
-                    stroke="#94a3b8" 
-                    fontSize={9} 
-                    tickLine={false} 
-                    axisLine={false} 
-                    width={40}
-                    domain={['Success Rate', 'Productivity', 'Clear Floor Rate', 'Scorecard'].includes(selectedCategory) ? [0, 100] : [0, 'auto']}
-                  />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#1e293b', 
-                      border: '1px solid #334155', 
-                      borderRadius: '6px',
-                      color: '#fff',
-                      fontSize: '11px',
-                      boxShadow: '0 0 20px rgba(0,0,0,0.5)'
-                    }} 
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey={selectedCategory}
-                    stroke="#a83030" 
-                    strokeWidth={2}
-                    fillOpacity={1} 
-                    fill="url(#colorDeliveries)"
-                    animationDuration={800}
-                    animationEasing="ease-in-out"
-                    isAnimationActive={true}
-                  />
-                </AreaChart>
+                (() => {
+                  console.log('🎨 Rendering Delivery Trend Area chart with:', {
+                    dataRows: filteredChartData.length,
+                    selectedCategory,
+                    firstRow: filteredChartData[0],
+                    lastRow: filteredChartData[filteredChartData.length - 1]
+                  })
+                  return (
+                    <AreaChart 
+                      key={`area-${selectedHub}-${hubDeliveryTrendRange}-${selectedCategory}`}
+                      data={filteredChartData}
+                      margin={{ top: 10, right: 30, left: 0, bottom: 50 }}
+                      isAnimationActive={true}
+                      animationDuration={1200}
+                    >
+                      <defs>
+                        <linearGradient id="colorDeliveries" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#a83030" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#a83030" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                      <XAxis 
+                        dataKey="month" 
+                        stroke="#94a3b8" 
+                        fontSize={8} 
+                        tickLine={false} 
+                        axisLine={false}
+                        angle={0}
+                        textAnchor="middle"
+                        interval={0}
+                        height={60}
+                      />
+                      <YAxis 
+                        stroke="#94a3b8" 
+                        fontSize={9} 
+                        tickLine={false} 
+                        axisLine={false} 
+                        width={50}
+                        domain={chartDomain}
+                        isAnimationActive={true}
+                        animationDuration={1200}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: '#1e293b', 
+                          border: '1px solid #334155', 
+                          borderRadius: '6px',
+                          color: '#fff',
+                          fontSize: '11px',
+                          boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                        }} 
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey={selectedCategory}
+                        stroke="#a83030" 
+                        strokeWidth={2}
+                        fillOpacity={0.3} 
+                        fill="url(#colorDeliveries)"
+                        animationDuration={1200}
+                        animationEasing="ease-in-out"
+                        isAnimationActive={true}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey={selectedCategory}
+                        stroke="#f87171"
+                        strokeWidth={2}
+                        dot={false}
+                        activeDot={{ r: 3, fill: '#f87171' }}
+                        animationDuration={1200}
+                        animationEasing="ease-in-out"
+                        isAnimationActive={true}
+                      />
+                    </AreaChart>
+                  )
+                })()
               ) : (
-                <BarChart key={filteredChartData.length} data={filteredChartData}>
+                <BarChart 
+                  key={`bar-${selectedHub}-${hubDeliveryTrendRange}-${selectedCategory}`} 
+                  data={filteredChartData}
+                  isAnimationActive={true}
+                  animationDuration={1200}
+                >
                   <defs>
                     <linearGradient id="colorBar" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#a83030" stopOpacity={0.8}/>
@@ -2886,13 +2954,13 @@ const filteredChartData = useMemo(() => {
                   <XAxis 
                     dataKey="month" 
                     stroke="#94a3b8" 
-                    fontSize={6} 
+                    fontSize={8} 
                     tickLine={false} 
                     axisLine={false}
                     interval={0}
-                    angle={-45}
-                    textAnchor="end"
-                    height={80}
+                    angle={0}
+                    textAnchor="middle"
+                    height={40}
                   />
                   <YAxis 
                     stroke="#94a3b8" 
@@ -2900,7 +2968,9 @@ const filteredChartData = useMemo(() => {
                     tickLine={false} 
                     axisLine={false} 
                     width={40}
-                    domain={['Success Rate', 'Productivity', 'Clear Floor Rate', 'Scorecard'].includes(selectedCategory) ? [0, 100] : [0, 'auto']}
+                    domain={chartDomain}
+                    isAnimationActive={true}
+                    animationDuration={1200}
                   />
                   <Tooltip 
                     contentStyle={{ 
@@ -2915,7 +2985,7 @@ const filteredChartData = useMemo(() => {
                   <Bar 
                     dataKey={selectedCategory}
                     fill="url(#colorBar)"
-                    animationDuration={800}
+                    animationDuration={1200}
                     animationEasing="ease-in-out"
                     isAnimationActive={true}
                     radius={[4, 4, 0, 0]}
@@ -2933,6 +3003,7 @@ const filteredChartData = useMemo(() => {
         </div>
 
         {/* Charts Column - KPI Distribution Only */}
+        {selectedHub && selectedHub !== 'All Hubs' ? (
         <div className="flex flex-col">
           {/* KPI Grade Distribution - Spider/Radar Chart */}
           <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)] flex-1 h-full">
@@ -2943,7 +3014,14 @@ const filteredChartData = useMemo(() => {
             <ResponsiveContainer width="100%" height={300}>
               <RadarChart cx="50%" cy="50%" outerRadius="70%" data={kpiGradeData}>
                 <PolarGrid stroke="#334155" />
-                <PolarAngleAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 9 }} />
+                <PolarAngleAxis
+                  dataKey="name"
+                  tick={{ fill: '#94a3b8', fontSize: 8 }}
+                  tickFormatter={(value) => {
+                    const item = kpiGradeData.find(kpi => kpi.name === value)
+                    return item ? `${value} ${item.value}%` : value
+                  }}
+                />
                 <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
                 <Radar
                   name="KPI"
@@ -2976,6 +3054,11 @@ const filteredChartData = useMemo(() => {
             </div>
           </div>
         </div>
+        ) : (
+        <div className="flex items-center justify-center rounded-lg bg-slate-800/80 border border-slate-600/50 p-6 text-center text-slate-400">
+          Select a hub to view KPI distribution.
+        </div>
+        )}
       </div>
       )}
 
