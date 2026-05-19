@@ -603,11 +603,12 @@ function Dashboard() {
     return result
   }, [hubPerformance, selectedHub])
 
-  // Get unique hubs for filter - from dashboard_metrics
+  // Get unique hubs for filter - from dashboard_metrics and performance records
   const uniqueHubs = useMemo(() => {
-    const hubs = dashboardMetrics.map(item => item.hub).filter(Boolean)
-    return [...new Set(hubs)].sort().slice(0, 50)
-  }, [dashboardMetrics])
+    const metricHubs = dashboardMetrics.map(item => item.hub).filter(Boolean)
+    const performanceHubs = performanceRecords.map(item => item.hub).filter(Boolean)
+    return [...new Set([...metricHubs, ...performanceHubs])].sort()
+  }, [dashboardMetrics, performanceRecords])
 
   // Filter hubs based on search term
   const filteredHubs = useMemo(() => {
@@ -805,30 +806,12 @@ function Dashboard() {
     const normalizeHub = value => String(value || '').trim().toLowerCase()
     const selectedHubNorm = normalizeHub(selectedHub)
 
-    // When a specific hub is selected in hub view, calculate stats from dashboard_metrics directly.
-    if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
-      let hubMetrics = dashboardMetrics.filter(m => normalizeHub(m.hub) === selectedHubNorm)
+    const isHubRangeSelected = Boolean(hubFromDate || hubToDate || selectedDate || (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL'))
 
-      if (hubFromDate && hubToDate) {
-        hubMetrics = hubMetrics.filter(m => {
-          const recordDate = m.date?.split('T')[0] || m.date
-          return recordDate >= hubFromDate && recordDate <= hubToDate
-        })
-      } else if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
-        const latestHubDate = getMaxDateString(hubMetrics.map(m => m.date?.split('T')[0] || m.date))
-        const bounds = getRangeBounds(hubDeliveryTrendRange, latestHubDate)
-        if (bounds.start && bounds.end) {
-          hubMetrics = hubMetrics.filter(m => {
-            const recordDate = m.date?.split('T')[0] || m.date
-            return recordDate >= bounds.start && recordDate <= bounds.end
-          })
-        }
-      } else if (selectedDate) {
-        hubMetrics = hubMetrics.filter(m => {
-          const recordDate = m.date?.split('T')[0] || m.date
-          return recordDate === selectedDate
-        })
-      }
+    // When a specific hub is selected in hub view and no explicit KPI date range is selected,
+    // keep the legacy dashboard_metrics summary as a fallback.
+    if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs' && !isHubRangeSelected) {
+      let hubMetrics = dashboardMetrics.filter(m => normalizeHub(m.hub) === selectedHubNorm)
 
       if (hubMetrics.length === 0) {
         return {
@@ -883,6 +866,22 @@ function Dashboard() {
           const recordDate = k.date?.split('T')[0] || k.date
           return recordDate >= hubFromDate && recordDate <= hubToDate
         })
+      } else if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
+        const latestKpiDate = getMaxDateString(filteredKPI.map(k => k.date?.split('T')[0] || k.date))
+        const bounds = getRangeBounds(hubDeliveryTrendRange, latestKpiDate)
+        if (bounds.start && bounds.end) {
+          filteredPerformance = filteredPerformance.filter(p => {
+            const recordDate = p.date?.split('T')[0] || p.date
+            return recordDate >= bounds.start && recordDate <= bounds.end
+          })
+          filteredKPI = filteredKPI.filter(k => {
+            const recordDate = k.date?.split('T')[0] || k.date
+            return recordDate >= bounds.start && recordDate <= bounds.end
+          })
+        } else {
+          filteredPerformance = []
+          filteredKPI = []
+        }
       } else if (selectedDate) {
         filteredPerformance = filteredPerformance.filter(p => {
           const recordDate = p.date?.split('T')[0] || p.date
@@ -933,12 +932,20 @@ function Dashboard() {
       // Calculate KPI metrics
       let totalClearFloor = 0
       let totalScorecard = 0
-      let kpiCount = 0
+      let clearFloorCount = 0
+      let scorecardCount = 0
       
       filteredKPI.forEach(record => {
-        totalClearFloor += parseFloat(record.cfr) || 0
-        totalScorecard += parseFloat(record.sr) || 0
-        kpiCount++
+        const cfrValue = parseFloat(record.cfr)
+        const srValue = parseFloat(record.sr)
+        if (!Number.isNaN(cfrValue)) {
+          totalClearFloor += cfrValue
+          clearFloorCount++
+        }
+        if (!Number.isNaN(srValue)) {
+          totalScorecard += srValue
+          scorecardCount++
+        }
       })
       
       // Calculate productivity as average of daily productivity values
@@ -964,8 +971,8 @@ function Dashboard() {
         : 0
       
       const avgSuccessRate = successRates.length > 0 ? Math.round(successRates.reduce((sum, rate) => sum + rate, 0) / successRates.length) : 0
-      const avgClearFloor = kpiCount > 0 ? Math.round(totalClearFloor / kpiCount) : 0
-      const avgScorecard = kpiCount > 0 ? (totalScorecard / kpiCount).toFixed(1) : '0.0'
+      const avgClearFloor = clearFloorCount > 0 ? Math.round(totalClearFloor / clearFloorCount) : 0
+      const avgScorecard = scorecardCount > 0 ? (totalScorecard / scorecardCount).toFixed(1) : '0.0'
       
       return {
         successRate: avgSuccessRate,
@@ -1137,6 +1144,8 @@ function Dashboard() {
           const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
           return itemDate >= bounds.start && itemDate <= bounds.end
         })
+      } else {
+        filteredKpiData = []
       }
     } else if (selectedDate) {
       // Fallback to single date if no range is set
@@ -1161,7 +1170,11 @@ function Dashboard() {
     ]
     
     const result = kpiFields.map(field => {
-      const values = filteredKpiData.map(item => parsePercentage(item[field.key] || 0))
+      const values = filteredKpiData
+        .map(item => item[field.key])
+        .filter(val => val !== null && val !== undefined && val !== '')
+        .map(val => parsePercentage(val))
+
       const avg = values.length > 0
         ? Math.round(values.reduce((sum, val) => sum + val, 0) / values.length)
         : 0
