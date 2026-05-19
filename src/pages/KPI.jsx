@@ -1,5 +1,5 @@
 // Clean version - all percentage and grade fixes applied
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, Calendar, Building2, MapPin, CheckCircle, AlertCircle, AlertTriangle, Users } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { getKpiRecords, batchInsertKpiRecords, deleteAllKpiRecords, getClusterLeaders } from '../lib/data'
@@ -90,6 +90,8 @@ function KPI() {
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, status: '' })
   const [message, setMessage] = useState({ type: '', text: '' })
   const [clusterLeaders, setClusterLeaders] = useState([])
+  const [currentPage, setCurrentPage] = useState(1)
+  const rowsPerPage = 100
 
   const showMessage = (type, text) => {
     setMessage({ type, text })
@@ -167,7 +169,7 @@ function KPI() {
     setFilters(prev => ({ ...prev, [key]: value }))
   }
 
-  const applyFilters = () => {
+  const applyFilters = useCallback(() => {
     let result = data
 
     if (searchTerm) {
@@ -236,12 +238,12 @@ function KPI() {
     })
 
     setFilteredData(result)
-  }
+  }, [data, filters, searchTerm, clusterLeaders])
 
   // Auto-apply filters when they change
   useEffect(() => {
     applyFilters()
-  }, [filters, applyFilters])
+  }, [filters, searchTerm, data, clusterLeaders, applyFilters])
 
   const clearFilters = () => {
     setFilters({ dateFrom: '', dateTo: '', subRegion: '', operatorHub: '', rider: '', grade: '', clusterLead: '' })
@@ -438,6 +440,13 @@ function KPI() {
   const uniqueSubRegions = [...new Set(data.map(item => item.sub_region).filter(Boolean))]
   const uniqueHubs = [...new Set(data.map(item => item.operator_hub))]
   const uniqueGrades = [...new Set(data.map(item => item.grade))]
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / rowsPerPage))
+  const startIndex = (currentPage - 1) * rowsPerPage
+  const paginatedData = filteredData.slice(startIndex, startIndex + rowsPerPage)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filteredData])
 
   const getGradeBadgeColor = (grade) => {
     switch (grade) {
@@ -476,6 +485,13 @@ function KPI() {
           >
             <Upload className="w-3.5 h-3.5" />
             Upload
+          </button>
+          <button
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 font-medium text-xs hover:shadow-md"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Template
           </button>
           <button
             onClick={handleExport}
@@ -592,7 +608,7 @@ function KPI() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
-              {filteredData.map((row) => (
+              {paginatedData.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-700/50 transition-all duration-200">
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.date}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs font-semibold text-white">{row.region}</td>
@@ -634,9 +650,57 @@ function KPI() {
         )}
       </div>
 
-      <div className="text-xs text-slate-400 font-medium">
-        Showing <span className="text-white font-semibold">{filteredData.length}</span> of <span className="text-white font-semibold">{data.length}</span> records
-      </div>
+      {totalPages > 1 ? (
+        <div className="sticky bottom-0 z-10 flex items-center justify-between bg-slate-800 rounded-xl shadow-sm border border-slate-700 p-2.5">
+          <div className="text-xs text-slate-400">
+            Showing <span className="font-semibold text-white">{startIndex + 1}</span> to <span className="font-semibold text-white">{Math.min(startIndex + rowsPerPage, filteredData.length)}</span> of <span className="font-semibold text-white">{filteredData.length}</span> filtered records
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-lg hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-sm"
+            >
+              Previous
+            </button>
+
+            <div className="flex items-center gap-0.5 overflow-x-auto max-w-[180px] sm:max-w-[250px]">
+              {Array.from({ length: totalPages }, (_, i) => {
+                const pageNum = i + 1
+
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`min-w-[1.75rem] h-7 text-xs font-semibold rounded-lg transition-all duration-200 flex-shrink-0 ${
+                      currentPage === pageNum
+                        ? 'bg-maroon-600 text-white shadow-sm'
+                        : 'border border-slate-600 hover:bg-slate-700 hover:border-slate-500 text-slate-300'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                )
+              })}
+            </div>
+
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="px-2.5 py-1 text-xs font-semibold border border-slate-600 rounded-lg hover:bg-slate-700 hover:border-slate-500 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-sm"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-xs text-slate-400 font-medium">
+          <div>
+            Showing <span className="text-white font-semibold">{paginatedData.length}</span> of <span className="text-white font-semibold">{filteredData.length}</span> filtered records
+            {' '} (Page <span className="text-white font-semibold">{currentPage}</span> of <span className="text-white font-semibold">{totalPages}</span>)
+          </div>
+        </div>
+      )}
 
       {/* Upload Modal */}
       {showUploadModal && (
@@ -689,6 +753,14 @@ function KPI() {
                       <Upload className="w-3.5 h-3.5" />
                       Choose File
                     </label>
+                    <button
+                      type="button"
+                      onClick={handleDownloadTemplate}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 shadow-sm hover:shadow-md"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download Template
+                    </button>
                   </div>
                   <div className="bg-slate-700/50 rounded-lg p-3">
                     <p className="text-slate-300 text-xs font-medium mb-1">Required columns:</p>

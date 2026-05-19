@@ -1590,6 +1590,33 @@ const filteredChartData = useMemo(() => {
   return []
 }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedCluster, hubToClusterMap, hubFromDate, hubToDate, selectedCategory, hubDeliveryTrendRange])
 
+const hubDeliveryTrendDateLabel = useMemo(() => {
+  const formatDisplayDate = (dateStr) => {
+    const date = new Date(dateStr)
+    if (Number.isNaN(date.getTime())) return dateStr
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+
+  if (hubFromDate && hubToDate) {
+    return `${formatDisplayDate(hubFromDate)} to ${formatDisplayDate(hubToDate)}`
+  }
+
+  if (filteredChartData.length > 0) {
+    const sortedDates = filteredChartData
+      .map(item => item.month)
+      .filter(Boolean)
+      .sort()
+    if (sortedDates.length > 0) {
+      return `${formatDisplayDate(sortedDates[0])} to ${formatDisplayDate(sortedDates[sortedDates.length - 1])}`
+    }
+  }
+
+  if (hubDeliveryTrendRange === 'L7D') return 'Last 7 Days'
+  if (hubDeliveryTrendRange === 'P7D') return 'Prior 7 Days'
+  if (hubDeliveryTrendRange === 'MTD') return 'Month to Date'
+  return 'All Dates'
+}, [hubFromDate, hubToDate, hubDeliveryTrendRange, filteredChartData])
+
 const chartDomain = useMemo(() => {
   if (!filteredChartData || filteredChartData.length === 0) {
     return [0, 'auto']
@@ -1605,6 +1632,106 @@ const chartDomain = useMemo(() => {
 
   return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
 }, [filteredChartData, selectedCategory])
+
+// Calculate hub level period comparison data for Graph Comparison
+const hubLevelGraphComparison = useMemo(() => {
+  if (dashboardView !== 'hub' || !selectedHub || selectedHub === 'All Hubs' || !dashboardMetrics || dashboardMetrics.length === 0) {
+    return []
+  }
+
+  const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
+  let hubData = dashboardMetrics.filter(item => {
+    const itemHubNorm = String(item.hub || '').trim().toLowerCase()
+    return itemHubNorm === selectedHubNorm
+  })
+
+  if (hubData.length === 0) return []
+
+  // Get latest date for reference
+  const dates = hubData.map(item => String(item.date || '').split('T')[0]).filter(Boolean)
+  if (dates.length === 0) return []
+  
+  const latestDate = new Date(dates.reduce((latest, current) => current > latest ? current : latest, dates[0]))
+  
+  // Calculate date ranges
+  const l7dStart = new Date(latestDate)
+  l7dStart.setDate(latestDate.getDate() - 6)
+  const l7dEnd = new Date(latestDate)
+
+  const p7dEnd = new Date(l7dStart)
+  p7dEnd.setDate(p7dEnd.getDate() - 1)
+  const p7dStart = new Date(p7dEnd)
+  p7dStart.setDate(p7dEnd.getDate() - 6)
+
+  const mtdStart = new Date(latestDate.getFullYear(), latestDate.getMonth(), 1)
+  const mtdEnd = new Date(latestDate)
+
+  // Helper to format dates for comparison
+  const formatLocalDate = (date) => {
+    const pad = (value) => String(value).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  }
+
+  const l7dStart_str = formatLocalDate(l7dStart)
+  const l7dEnd_str = formatLocalDate(l7dEnd)
+  const p7dStart_str = formatLocalDate(p7dStart)
+  const p7dEnd_str = formatLocalDate(p7dEnd)
+  const mtdStart_str = formatLocalDate(mtdStart)
+  const mtdEnd_str = formatLocalDate(mtdEnd)
+
+  // Filter data by periods
+  const calculatePeriodAvg = (startDate, endDate) => {
+    const filtered = hubData.filter(item => {
+      const itemDate = String(item.date || '').split('T')[0]
+      return itemDate >= startDate && itemDate <= endDate
+    })
+
+    if (filtered.length === 0) return null
+
+    const totals = {
+      success_rate: 0,
+      riders: 0,
+      delivered: 0,
+      on_hold: 0,
+      productivity: 0,
+      clear_floor_rate: 0,
+      scorecard: 0,
+      count: 0
+    }
+
+    filtered.forEach(item => {
+      totals.success_rate += Number(item.success_rate) || 0
+      totals.riders += Number(item.riders) || 0
+      totals.delivered += Number(item.delivered) || 0
+      totals.on_hold += Number(item.on_hold) || 0
+      totals.productivity += Number(item.productivity) || 0
+      totals.clear_floor_rate += Number(item.clear_floor_rate) || 0
+      totals.scorecard += Number(item.scorecard) || 0
+      totals.count++
+    })
+
+    return {
+      'Success Rate': totals.count > 0 ? Number(((totals.success_rate / totals.count) * 100).toFixed(1)) : 0,
+      'Riders': totals.riders,
+      'Delivered': totals.delivered,
+      'On-Hold': totals.on_hold,
+      'Productivity': totals.count > 0 ? Number((totals.productivity / totals.count).toFixed(1)) : 0,
+      'Clear Floor Rate': totals.count > 0 ? Number((totals.clear_floor_rate / totals.count).toFixed(1)) : 0,
+      'Scorecard': totals.count > 0 ? Number((totals.scorecard / totals.count).toFixed(1)) : 0
+    }
+  }
+
+  const l7dAvg = calculatePeriodAvg(l7dStart_str, l7dEnd_str)
+  const p7dAvg = calculatePeriodAvg(p7dStart_str, p7dEnd_str)
+  const mtdAvg = calculatePeriodAvg(mtdStart_str, mtdEnd_str)
+
+  const result = []
+  if (l7dAvg) result.push({ period: 'Last 7 Days', ...l7dAvg })
+  if (p7dAvg) result.push({ period: 'Prior 7 Days', ...p7dAvg })
+  if (mtdAvg) result.push({ period: 'Month to Date', ...mtdAvg })
+
+  return result
+}, [dashboardMetrics, selectedHub, dashboardView])
 
   // Close hub dropdown when clicking outside
   useEffect(() => {
@@ -2911,55 +3038,64 @@ const chartDomain = useMemo(() => {
 
       {/* Charts Row - Horizontal Layout - Hub Level Only */}
       {dashboardView === 'hub' && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Delivery Performance - Horizontal Bar Chart */}
-        <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)] lg:col-span-2">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
-              <h3 className="text-sm font-semibold text-white tracking-wide">Delivery Trend</h3>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* Tabs */}
-              <div className="flex bg-slate-700/50 rounded-lg p-1">
-                <button
-                  onClick={() => setHubDeliveryTrendTab('chart')}
-                  className={`px-3 py-1 rounded text-xs font-medium transition-all ${
-                    hubDeliveryTrendTab === 'chart'
-                      ? 'bg-maroon-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Chart
-                </button>
-                <button
-                  onClick={() => setHubDeliveryTrendTab('graph')}
-                  className={`px-3 py-1 rounded text-xs font-medium transition-all ${
-                    hubDeliveryTrendTab === 'graph'
-                      ? 'bg-maroon-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Graph
-                </button>
+      <div className="space-y-4">
+        {/* Top Row: Delivery Trend and Graph Comparison */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Delivery Performance - Area/Bar Chart */}
+          <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
+                <h3 className="text-sm font-semibold text-white tracking-wide">Delivery Trend</h3>
               </div>
-              {/* Category Filter */}
-              <select 
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
-              >
-                <option value="Success Rate">Success Rate</option>
-                <option value="Riders">Riders</option>
-                <option value="Delivered">Delivered</option>
-                <option value="On-Hold">On-Hold</option>
-                <option value="Productivity">Productivity</option>
-                <option value="Clear Floor Rate">Clear Floor Rate</option>
-                <option value="Scorecard">Scorecard</option>
-              </select>
+              <div className="flex items-center gap-2">
+                {/* Tabs */}
+                <div className="flex items-center gap-2">
+                  <div className="flex bg-slate-700/50 rounded-lg p-1">
+                    <button
+                      onClick={() => setHubDeliveryTrendTab('chart')}
+                      className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                        hubDeliveryTrendTab === 'chart'
+                          ? 'bg-maroon-500 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Chart
+                    </button>
+                    <button
+                      onClick={() => setHubDeliveryTrendTab('graph')}
+                      className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                        hubDeliveryTrendTab === 'graph'
+                          ? 'bg-maroon-500 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Graph
+                    </button>
+                  </div>
+                  {hubDeliveryTrendDateLabel && (
+                    <span className="text-slate-400 text-[11px] whitespace-nowrap">
+                      {hubDeliveryTrendDateLabel}
+                    </span>
+                  )}
+                </div>
+                {/* Category Filter */}
+                <select 
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+                >
+                  <option value="Success Rate">Success Rate</option>
+                  <option value="Riders">Riders</option>
+                  <option value="Delivered">Delivered</option>
+                  <option value="On-Hold">On-Hold</option>
+                  <option value="Productivity">Productivity</option>
+                  <option value="Clear Floor Rate">Clear Floor Rate</option>
+                  <option value="Scorecard">Scorecard</option>
+                </select>
+              </div>
             </div>
-          </div>
-          <ResponsiveContainer width="100%" height={320}>
+            <ResponsiveContainer width="100%" height={320}>
             {filteredChartData.length > 0 ? (
               hubDeliveryTrendTab === 'chart' ? (
                 (() => {
@@ -2994,6 +3130,12 @@ const chartDomain = useMemo(() => {
                         textAnchor="middle"
                         interval={0}
                         height={60}
+                        tickFormatter={(value) => {
+                          const date = new Date(value)
+                          return Number.isNaN(date.getTime())
+                            ? value
+                            : date.toLocaleDateString('en-US', { weekday: 'long' })
+                        }}
                       />
                       <YAxis 
                         stroke="#94a3b8" 
@@ -3066,6 +3208,12 @@ const chartDomain = useMemo(() => {
                     angle={0}
                     textAnchor="middle"
                     height={40}
+                    tickFormatter={(value) => {
+                      const date = new Date(value)
+                      return Number.isNaN(date.getTime())
+                        ? value
+                        : date.toLocaleDateString('en-US', { weekday: 'long' })
+                    }}
                   />
                   <YAxis 
                     stroke="#94a3b8" 
@@ -3107,39 +3255,123 @@ const chartDomain = useMemo(() => {
               </div>
             )}
           </ResponsiveContainer>
+          </div>
+
+          {/* Graph Comparison - Period Comparison Bar Chart */}
+          <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
+                <h3 className="text-sm font-semibold text-white tracking-wide">Graph Comparison</h3>
+              </div>
+              {/* Category Filter for Comparison */}
+              <select 
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+              >
+                <option value="Success Rate">Success Rate</option>
+                <option value="Riders">Riders</option>
+                <option value="Delivered">Delivered</option>
+                <option value="On-Hold">On-Hold</option>
+                <option value="Productivity">Productivity</option>
+                <option value="Clear Floor Rate">Clear Floor Rate</option>
+                <option value="Scorecard">Scorecard</option>
+              </select>
+            </div>
+            <ResponsiveContainer width="100%" height={320}>
+              {hubLevelGraphComparison.length > 0 ? (
+                <BarChart
+                  data={hubLevelGraphComparison}
+                  margin={{ top: 10, right: 30, left: 0, bottom: 30 }}
+                  isAnimationActive={true}
+                  animationDuration={1200}
+                >
+                  <defs>
+                    <linearGradient id="colorCompare" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#a83030" stopOpacity={0.8}/>
+                      <stop offset="95%" stopColor="#a83030" stopOpacity={0.4}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                  <XAxis 
+                    dataKey="period" 
+                    stroke="#94a3b8" 
+                    fontSize={8} 
+                    tickLine={false} 
+                    axisLine={false}
+                    angle={-15}
+                    textAnchor="end"
+                    height={60}
+                  />
+                  <YAxis 
+                    stroke="#94a3b8" 
+                    fontSize={9} 
+                    tickLine={false} 
+                    axisLine={false} 
+                    width={50}
+                  />
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: '#1e293b', 
+                      border: '1px solid #334155', 
+                      borderRadius: '6px',
+                      color: '#fff',
+                      fontSize: '11px',
+                      boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                    }} 
+                  />
+                  <Bar 
+                    dataKey={selectedCategory}
+                    fill="url(#colorCompare)"
+                    animationDuration={1200}
+                    animationEasing="ease-in-out"
+                    isAnimationActive={true}
+                    radius={[4, 4, 0, 0]}
+                  >
+                    <LabelList dataKey={selectedCategory} position="top" fill="#f87171" fontSize={9} />
+                  </Bar>
+                </BarChart>
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <span className="text-slate-400 text-sm">
+                    Select hub and date to view comparison
+                  </span>
+                </div>
+              )}
+            </ResponsiveContainer>
+          </div>
         </div>
 
-        {/* Charts Column - KPI Distribution Only */}
+        {/* KPI Distribution Section - Full Width Below */}
         {selectedHub && selectedHub !== 'All Hubs' ? (
-        <div className="flex flex-col">
-          {/* KPI Grade Distribution - Spider/Radar Chart */}
-          <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)] flex-1 h-full">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
-              <h3 className="text-sm font-semibold text-white tracking-wide">KPI Distribution</h3>
-            </div>
-            {kpiGradeData.length > 0 ? (
-              <>
-                <ResponsiveContainer width="100%" height={300}>
-                  <RadarChart cx="50%" cy="50%" outerRadius="55%" data={kpiGradeData}>
-                    <PolarGrid stroke="#334155" />
-                    <PolarAngleAxis
-                      dataKey="name"
-                      tick={{ fill: '#94a3b8', fontSize: 8 }}
-                      tickFormatter={(value) => {
-                        const item = kpiGradeData.find(kpi => kpi.name === value)
-                        return item ? `${value} ${item.value}%` : value
-                      }}
-                    />
-                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
-                    <Radar
-                      name="KPI"
-                      dataKey="value"
-                      stroke="#a83030"
-                      strokeWidth={2}
-                      fill="#a83030"
-                      fillOpacity={0.3}
-                    />
+        <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
+            <h3 className="text-sm font-semibold text-white tracking-wide">KPI Distribution</h3>
+          </div>
+          {kpiGradeData.length > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={300}>
+                <RadarChart cx="50%" cy="50%" outerRadius="55%" data={kpiGradeData}>
+                  <PolarGrid stroke="#334155" />
+                  <PolarAngleAxis
+                    dataKey="name"
+                    tick={{ fill: '#94a3b8', fontSize: 8 }}
+                    tickFormatter={(value) => {
+                      const item = kpiGradeData.find(kpi => kpi.name === value)
+                      return item ? `${value} ${item.value}%` : value
+                    }}
+                  />
+                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
+                  <Radar
+                    name="KPI"
+                    dataKey="value"
+                    stroke="#a83030"
+                    strokeWidth={2}
+                    fill="#a83030"
+                    fillOpacity={0.3}
+                  />
                     <Tooltip 
                       contentStyle={{ 
                         backgroundColor: '#1e293b', 
@@ -3167,7 +3399,6 @@ const chartDomain = useMemo(() => {
                 No KPI distribution data available for this hub and selected range.
               </div>
             )}
-          </div>
         </div>
         ) : (
         <div className="flex items-center justify-center rounded-lg bg-slate-800/80 border border-slate-600/50 p-6 text-center text-slate-400">

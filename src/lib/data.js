@@ -867,20 +867,157 @@ export async function deleteClusterLeader(id) {
 
 // Get unique hubs from performance records efficiently
 export async function getUniqueHubs() {
-  const { data, error } = await supabase
-    .from('performance_records')
-    .select('hub')
-    .not('hub', 'is', null)
-    .not('hub', 'eq', '')
-    .order('hub')
-  
+  const allHubs = new Set()
+  let error = null
+
+  try {
+    const { data: perfData, error: perfError } = await supabase
+      .from('performance_records')
+      .select('hub')
+      .not('hub', 'is', null)
+      .not('hub', 'eq', '')
+      .order('hub')
+      .range(0, 9999)
+
+    if (perfError) {
+      error = perfError
+    } else {
+      perfData?.forEach(item => {
+        const hub = String(item.hub || '').trim()
+        if (hub) allHubs.add(hub)
+      })
+    }
+  } catch (err) {
+    error = err
+  }
+
+  try {
+    const { data: kpiData, error: kpiError } = await supabase
+      .from('kpi_records')
+      .select('operator_hub')
+      .not('operator_hub', 'is', null)
+      .not('operator_hub', 'eq', '')
+      .order('operator_hub')
+      .range(0, 9999)
+
+    if (kpiError) {
+      error = error || kpiError
+    } else {
+      kpiData?.forEach(item => {
+        const hub = String(item.operator_hub || '').trim()
+        if (hub) allHubs.add(hub)
+      })
+    }
+  } catch (err) {
+    error = error || err
+  }
+
   if (error) {
     console.error('getUniqueHubs error:', error)
-    return { data: [], error }
+    return { data: Array.from(allHubs).sort((a, b) => a.localeCompare(b)), error }
   }
-  
-  // Extract unique hubs
-  const uniqueHubs = [...new Set(data?.map(item => item.hub).filter(Boolean) || [])]
+
+  return { data: Array.from(allHubs).sort((a, b) => a.localeCompare(b)), error: null }
+}
+
+export async function getAllUniqueHubs() {
+  // Fast path: use DB RPC to get unique hubs directly.
+  try {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_unique_hubs')
+    if (!rpcError && Array.isArray(rpcData)) {
+      const uniqueHubs = rpcData
+        .map(item => String(item || '').trim())
+        .filter(Boolean)
+      return { data: uniqueHubs, error: null }
+    }
+  } catch (rpcErr) {
+    console.warn('get_all_unique_hubs RPC failed, falling back to paginated fetch', rpcErr)
+  }
+
+  // Client-side deduplication with proper pagination handling
+  const allHubs = new Set()
+  let perfError = null
+  let kpiError = null
+
+  // Fetch performance hubs with pagination
+  try {
+    let offset = 0
+    const pageSize = 1000
+    let hasMore = true
+
+    while (hasMore) {
+      const { data: perfData, error } = await supabase
+        .from('performance_records')
+        .select('hub', { count: 'exact' })
+        .not('hub', 'is', null)
+        .not('hub', 'eq', '')
+        .range(offset, offset + pageSize - 1)
+
+      if (error) {
+        perfError = error
+        hasMore = false
+      } else if (perfData) {
+        perfData.forEach(item => {
+          const hub = String(item.hub || '').trim()
+          if (hub) allHubs.add(hub)
+        })
+        // Stop if we got fewer results than the page size
+        if (perfData.length < pageSize) {
+          hasMore = false
+        } else {
+          offset += pageSize
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Performance hubs fetch error:', err)
+    perfError = err
+  }
+
+  // Fetch KPI hubs with pagination
+  try {
+    let offset = 0
+    const pageSize = 1000
+    let hasMore = true
+
+    while (hasMore) {
+      const { data: kpiData, error } = await supabase
+        .from('kpi_records')
+        .select('operator_hub', { count: 'exact' })
+        .not('operator_hub', 'is', null)
+        .not('operator_hub', 'eq', '')
+        .range(offset, offset + pageSize - 1)
+
+      if (error) {
+        kpiError = error
+        hasMore = false
+      } else if (kpiData) {
+        kpiData.forEach(item => {
+          const hub = String(item.operator_hub || '').trim()
+          if (hub) allHubs.add(hub)
+        })
+        // Stop if we got fewer results than the page size
+        if (kpiData.length < pageSize) {
+          hasMore = false
+        } else {
+          offset += pageSize
+        }
+      }
+    }
+  } catch (err) {
+    console.error('KPI hubs fetch error:', err)
+    kpiError = err
+  }
+
+  if (perfError) {
+    console.error('getAllUniqueHubs performance error:', perfError)
+  }
+  if (kpiError) {
+    console.error('getAllUniqueHubs KPI error:', kpiError)
+  }
+
+  const uniqueHubs = Array.from(allHubs).sort((a, b) => a.localeCompare(b))
+  const error = perfError || kpiError || null
   return { data: uniqueHubs, error }
 }
 
@@ -891,29 +1028,56 @@ export async function syncClusterToKpiRecords(leaderName, hubs) {
   let totalCount = 0
   let lastError = null
 
-  // Process hubs in batches of 2 to avoid timeout
-  const batchSize = 2
-  for (let i = 0; i < hubs.length; i += batchSize) {
-    const batch = hubs.slice(i, i + batchSize)
-    
-    try {
-      const { data, error, count } = await supabase
-        .from('kpi_records')
-        .update({ cluster: leaderName })
-        .in('operator_hub', batch)
-        .select('id', { count: 'exact' })
-
-      if (error) {
-        console.error(`Sync error for batch ${i}-${i + batchSize}:`, error)
-        lastError = error
-      } else {
-        totalCount += count || 0
-        console.log(`Synced batch ${i}-${i + batchSize}: ${count || 0} records`)
-      }
-    } catch (err) {
-      console.error(`Sync error for batch ${i}-${i + batchSize}:`, err)
-      lastError = err
+  // Prefer server-side RPC to perform updates in a single DB call
+  try {
+    const { data, error } = await supabase.rpc('sync_cluster_to_kpi', { leader_name: leaderName, hub_list: hubs })
+    if (!error && data !== null) {
+      // RPC returns integer count
+      const count = Array.isArray(data) ? data[0] : data
+      totalCount = Number(count) || 0
+      console.log(`Synced cluster via RPC to ${totalCount} KPI records for hubs:`, hubs)
+      return { error: null, count: totalCount }
     }
+    if (error) {
+      // If the RPC doesn't exist or failed, fall back to the hub-specific RPC
+      console.warn('RPC sync_cluster_to_kpi not available or failed, falling back to hub-level RPC updates:', error)
+      lastError = error
+    }
+  } catch (rpcErr) {
+    console.warn('RPC call sync_cluster_to_kpi failed, will fallback to hub-level RPC updates:', rpcErr)
+    lastError = rpcErr
+  }
+
+  // Fallback: Process each hub through a hub-specific batch RPC
+  for (const hub of hubs) {
+    let hubTotal = 0
+    const batchSize = 100
+    while (true) {
+      try {
+        const { data, error } = await supabase.rpc('sync_cluster_to_kpi_hub_batch', {
+          leader_name: leaderName,
+          hub,
+          batch_size: batchSize,
+        })
+
+        if (error) {
+          console.warn(`Hub batch RPC sync_cluster_to_kpi_hub_batch failed for ${hub}:`, error)
+          lastError = error
+          break
+        }
+
+        const count = Number(Array.isArray(data) ? data[0] : data) || 0
+        hubTotal += count
+        console.log(`Synced hub ${hub} via batch RPC: ${count} records`)
+        if (count === 0) break
+      } catch (err) {
+        console.error(`Sync exception for hub ${hub} via batch RPC:`, err)
+        lastError = err
+        break
+      }
+    }
+
+    totalCount += hubTotal
   }
 
   console.log(`Synced cluster "${leaderName}" to ${totalCount} total KPI records for hubs:`, hubs)
@@ -926,24 +1090,41 @@ export async function clearClusterFromKpiRecords(hubs) {
 
   let lastError = null
 
-  // Process hubs in batches of 2 to avoid timeout
-  const batchSize = 2
-  for (let i = 0; i < hubs.length; i += batchSize) {
-    const batch = hubs.slice(i, i + batchSize)
-    
-    try {
-      const { error } = await supabase
-        .from('kpi_records')
-        .update({ cluster: '' })
-        .in('operator_hub', batch)
+  // Try server-side RPC first
+  try {
+    const { data, error } = await supabase.rpc('clear_cluster_from_kpi', { hub_list: hubs })
+    if (!error) {
+      const count = Number(Array.isArray(data) ? data[0] : data) || 0
+      console.log(`Cleared cluster for ${count} KPI records using RPC for hubs:`, hubs)
+      return { error: null }
+    }
+    console.warn('RPC clear_cluster_from_kpi not available or failed, falling back to hub-level batch RPC:', error)
+    lastError = error
+  } catch (rpcErr) {
+    console.warn('RPC call clear_cluster_from_kpi failed, falling back to hub-level batch RPC:', rpcErr)
+    lastError = rpcErr
+  }
 
-      if (error) {
-        console.error(`Clear error for batch ${i}-${i + batchSize}:`, error)
-        lastError = error
+  // Fallback: Process each hub through a batch RPC
+  for (const hub of hubs) {
+    const batchSize = 100
+    while (true) {
+      try {
+        const { data, error } = await supabase.rpc('clear_cluster_from_kpi_hub_batch', { hub, batch_size: batchSize })
+        if (error) {
+          console.warn(`Hub batch RPC clear_cluster_from_kpi_hub_batch failed for ${hub}:`, error)
+          lastError = error
+          break
+        }
+
+        const count = Number(Array.isArray(data) ? data[0] : data) || 0
+        console.log(`Cleared ${count} KPI records for hub ${hub} via batch RPC`)
+        if (count === 0) break
+      } catch (err) {
+        console.error(`Clear exception for hub ${hub} via batch RPC:`, err)
+        lastError = err
+        break
       }
-    } catch (err) {
-      console.error(`Clear error for batch ${i}-${i + batchSize}:`, err)
-      lastError = err
     }
   }
 
@@ -954,17 +1135,39 @@ export async function clearClusterFromKpiRecords(hubs) {
 export async function checkHubsInKpiRecords(hubs) {
   if (!hubs || hubs.length === 0) return { found: [], notFound: [] }
 
-  const { data, error } = await supabase
-    .from('kpi_records')
-    .select('operator_hub')
-    .in('operator_hub', hubs)
+  const found = new Set()
+  const errors = []
 
-  if (error) {
-    return { found: [], notFound: hubs, error }
-  }
+  // Query each hub individually to avoid issues with REST encoding of arrays
+  await Promise.all(hubs.map(async (hub) => {
+    try {
+      const { data, error } = await supabase
+        .from('kpi_records')
+        .select('operator_hub')
+        .eq('operator_hub', hub)
+        .limit(1)
 
-  const foundHubs = [...new Set(data?.map(r => r.operator_hub) || [])]
-  const notFoundHubs = hubs.filter(hub => !foundHubs.includes(hub))
+      if (error) {
+        // Treat missing-function errors as non-fatal for existence checks
+        if (error.code === '42883' && String(error.message || '').includes('does not exist')) {
+          console.warn(`DB function missing while checking hub ${hub}:`, error.message)
+        } else {
+          errors.push({ hub, error })
+        }
+      } else if (data && data.length > 0) {
+        found.add(data[0].operator_hub)
+      }
+    } catch (err) {
+      if (err && err.code === '42883' && String(err.message || '').includes('does not exist')) {
+        console.warn(`DB function missing while checking hub ${hub}:`, err.message)
+      } else {
+        errors.push({ hub, error: err })
+      }
+    }
+  }))
 
-  return { found: foundHubs, notFound: notFoundHubs }
+  const foundHubs = Array.from(found)
+  const notFoundHubs = hubs.filter(h => !found.has(h))
+  const error = errors.length > 0 ? errors : null
+  return { found: foundHubs, notFound: notFoundHubs, error }
 }

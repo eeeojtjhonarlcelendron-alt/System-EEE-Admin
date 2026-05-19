@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Plus, Edit, Trash2, X, Loader2, Building2, User, Search, CheckCircle, AlertCircle, AlertTriangle } from 'lucide-react'
-import { getClusterLeaders, createClusterLeader, updateClusterLeader, deleteClusterLeader, getPerformanceRecords, getUniqueHubs, syncClusterToKpiRecords, clearClusterFromKpiRecords, checkHubsInKpiRecords } from '../lib/data'
+import { getClusterLeaders, createClusterLeader, updateClusterLeader, deleteClusterLeader, getAllUniqueHubs, getUniqueHubs, syncClusterToKpiRecords, clearClusterFromKpiRecords, checkHubsInKpiRecords } from '../lib/data'
 
 function Clustering() {
   const [data, setData] = useState([])
@@ -16,6 +16,7 @@ function Clustering() {
   const [hubSearch, setHubSearch] = useState('')
   const [isSyncing, setIsSyncing] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
+  const [pendingDelete, setPendingDelete] = useState(null)
   const modalRef = useRef(null)
 
   const showMessage = (type, text) => {
@@ -40,18 +41,24 @@ function Clustering() {
   useEffect(() => {
     if (!showModal) {
       async function updateAvailableHubs() {
-        const { data: uniqueHubs, error } = await getUniqueHubs()
-        
+        let { data: uniqueHubs, error } = await getAllUniqueHubs()
+
+        if ((!uniqueHubs || uniqueHubs.length === 0) && !error) {
+          const fallbackResult = await getUniqueHubs()
+          uniqueHubs = fallbackResult.data || []
+          error = fallbackResult.error || error
+        }
+
         if (error) {
           console.error('Failed to fetch unique hubs:', error)
           setAvailableHubs([])
           return
         }
-        
+
         // Get hubs already assigned to cluster leaders
         const assignedHubs = data?.flatMap(r => r.hubs || []) || []
-        const availableHubsList = uniqueHubs.filter(hub => !assignedHubs.includes(hub))
-        
+        const availableHubsList = (uniqueHubs || []).filter(hub => !assignedHubs.includes(hub))
+
         setAvailableHubs(availableHubsList.sort((a, b) => a.localeCompare(b)))
       }
       updateAvailableHubs()
@@ -60,33 +67,39 @@ function Clustering() {
 
   useEffect(() => {
     async function updateAvailableHubs() {
+      let { data: uniqueHubs, error } = await getAllUniqueHubs()
+      if ((!uniqueHubs || uniqueHubs.length === 0) && !error) {
+        const fallbackResult = await getUniqueHubs()
+        uniqueHubs = fallbackResult.data || []
+        error = fallbackResult.error || error
+      }
+      if (error) {
+        console.error('Failed to fetch unique hubs:', error)
+      }
+
       if (editingItem) {
+        const currentHubs = editingItem.hubs || []
         setFormData({
           leader_name: editingItem.leader_name || '',
-          hubs: editingItem.hubs || []
+          hubs: currentHubs
         })
-        setSelectedHubs(editingItem.hubs || [])
-        
-        // When editing, include current leader's hubs in available list
-        const { data: performanceData } = await getPerformanceRecords()
-        const uniqueHubs = [...new Set(performanceData?.map(p => p.hub).filter(Boolean) || [])]
-        
+        setSelectedHubs(currentHubs)
+
+        const allHubs = [...new Set([...(uniqueHubs || []), ...currentHubs])]
+
         // Get hubs assigned to OTHER cluster leaders (excluding current)
         const assignedHubs = data
           .filter(r => r.id !== editingItem.id)
           .flatMap(r => r.hubs || [])
-        const availableHubsList = uniqueHubs.filter(hub => !assignedHubs.includes(hub))
-        
+        const availableHubsList = allHubs.filter(hub => !assignedHubs.includes(hub))
+
         setAvailableHubs(availableHubsList.sort((a, b) => a.localeCompare(b)))
       } else {
         setFormData({ leader_name: '', hubs: [] })
         setSelectedHubs([])
-        
-        // Reset available hubs to exclude all assigned hubs
+
         const assignedHubs = data?.flatMap(r => r.hubs || []) || []
-        const { data: performanceData } = await getPerformanceRecords()
-        const uniqueHubs = [...new Set(performanceData?.map(p => p.hub).filter(Boolean) || [])]
-        const availableHubsList = uniqueHubs.filter(hub => !assignedHubs.includes(hub))
+        const availableHubsList = (uniqueHubs || []).filter(hub => !assignedHubs.includes(hub))
         setAvailableHubs(availableHubsList.sort((a, b) => a.localeCompare(b)))
       }
       setHubSearch('')
@@ -107,21 +120,29 @@ function Clustering() {
     setShowModal(true)
   }
 
-  const handleDelete = async (id) => {
-    if (!confirm('Are you sure you want to delete this cluster leader?')) return
-    
-    // Find the item to get its hubs
-    const itemToDelete = data.find(item => item.id === id)
-    if (itemToDelete && itemToDelete.hubs && itemToDelete.hubs.length > 0) {
-      // Clear cluster name from KPI records for these hubs
+  const handleDelete = (item) => {
+    setPendingDelete(item)
+  }
+
+  const cancelDelete = () => {
+    setPendingDelete(null)
+  }
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+
+    const itemToDelete = pendingDelete
+    setPendingDelete(null)
+
+    if (itemToDelete.hubs && itemToDelete.hubs.length > 0) {
       await clearClusterFromKpiRecords(itemToDelete.hubs)
     }
-    
-    const { error } = await deleteClusterLeader(id)
+
+    const { error } = await deleteClusterLeader(itemToDelete.id)
     if (error) {
       showMessage('error', 'Delete failed: ' + error.message)
     } else {
-      setData(prev => prev.filter(item => item.id !== id))
+      setData(prev => prev.filter(item => item.id !== itemToDelete.id))
       showMessage('success', 'Cluster leader deleted successfully')
     }
   }
@@ -236,6 +257,46 @@ function Clustering() {
         </div>
       )}
 
+      {pendingDelete && (
+        <div className="fixed inset-0 z-[80] bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-[hsl(220,20%,14%)] rounded-[14px] border border-[hsl(220,13%,30%)] shadow-[0_4px_16px_rgba(0,0,0,0.15)] w-full max-w-sm">
+            <div className="flex items-center justify-between p-4 border-b border-[hsl(220,13%,30%)]">
+              <div>
+                <p className="text-base font-semibold text-[hsl(220,15%,95%)]">Delete Cluster Leader</p>
+                <p className="text-[11px] text-[hsl(220,8%,55%)]">This action cannot be undone.</p>
+              </div>
+              <button
+                type="button"
+                onClick={cancelDelete}
+                className="p-1 text-[hsl(220,8%,55%)] hover:text-[hsl(220,15%,95%)] transition-all duration-180"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4 text-sm text-[hsl(220,8%,55%)]">
+              <p>Are you sure you want to delete <span className="font-semibold text-[hsl(220,15%,95%)]">{pendingDelete.leader_name}</span>?</p>
+              <p className="text-xs text-[hsl(220,8%,50%)]">Deleting this cluster leader will remove its assignment from the UI and clear the cluster name from KPI records for any assigned hubs.</p>
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-[hsl(220,13%,30%)]">
+              <button
+                type="button"
+                onClick={cancelDelete}
+                className="px-3 py-1.5 text-xs border border-[hsl(220,13%,30%)] rounded-[6px] text-[hsl(220,8%,55%)] hover:bg-[hsl(220,18%,18%)] transition-all duration-180"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                className="px-3 py-1.5 text-xs bg-red-500 hover:bg-red-600 text-white rounded-[6px] transition-all duration-180"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Data Table */}
       <div className="bg-[hsl(220,20%,14%)] rounded-[14px] border border-[hsl(220,13%,30%)] shadow-[0_2px_8px_rgba(0,0,0,0.05)] overflow-hidden">
         <div className="overflow-x-auto max-h-[calc(100vh-280px)]">
@@ -286,7 +347,7 @@ function Clustering() {
                         <Edit className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => handleDelete(row.id)}
+                        onClick={() => handleDelete(row)}
                         className="p-1.5 text-[hsl(220,8%,55%)] hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-180"
                         title="Delete"
                       >
