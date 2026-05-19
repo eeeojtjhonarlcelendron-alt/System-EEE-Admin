@@ -9,6 +9,7 @@ import {
   getPerformanceRecordsPaginated,
   getRecentPerformanceRecords,
   getPerformanceRecordsByRiderId,
+  getKpiRecords,
   getKpiRecordsPaginated,
   getRiders,
   getClusterLeaders,
@@ -313,6 +314,28 @@ function Dashboard() {
     }
   }
 
+  const getHubMetricDateRange = ({ selectedHub, hubFromDate, hubToDate, selectedDate, hubDeliveryTrendRange }) => {
+    if (hubFromDate && hubToDate) {
+      return { start: hubFromDate, end: hubToDate }
+    }
+
+    if (selectedDate) {
+      return { start: selectedDate, end: selectedDate }
+    }
+
+    if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
+      const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
+      const hubMetrics = dashboardMetrics.filter(item => String(item.hub || '').trim().toLowerCase() === selectedHubNorm)
+      const latestMetricDate = getMaxDateString(hubMetrics.map(item => item.date?.split('T')[0] || item.date))
+      if (!latestMetricDate) {
+        return null
+      }
+      return getRangeBounds(hubDeliveryTrendRange, latestMetricDate)
+    }
+
+    return null
+  }
+
   const showMessage = (type, text) => {
     setMessage({ type, text })
     setTimeout(() => setMessage({ type: '', text: '' }), 5000)
@@ -442,8 +465,8 @@ function Dashboard() {
         const overallKpiResult = await incrementProgress(currentProgress, 85, 'Fetching overall KPI metrics...', () => getOverallKPIMetrics())
         currentProgress = 85
         
-        // Stage 7: Fetch raw KPI records for KPI distribution charts (safe limited page) (95%)
-        const kpiPageResult = await incrementProgress(currentProgress, 95, 'Fetching KPI records for distribution chart...', () => getKpiRecordsPaginated(0, 1000))
+        // Stage 7: Fetch raw KPI records for KPI distribution charts
+        const kpiPageResult = await incrementProgress(currentProgress, 95, 'Fetching KPI records for distribution chart...', () => getKpiRecords())
         currentProgress = 95
         
         // Final stage: Processing (100%)
@@ -547,7 +570,7 @@ function Dashboard() {
         getDashboardStats(),
         getRiderHubStats(),
         getRecentPerformanceRecords(30),
-        getKpiRecordsPaginated(0, 1000),
+        getKpiRecords(),
         getDashboardMetrics(),
         getRiders()
       ])
@@ -846,7 +869,62 @@ function Dashboard() {
     }
 
     // For hub view with filters: calculate from Performance, KPI, and Rider pages
-    if (dashboardView === 'hub' && (selectedHub || selectedDate || hubFromDate || hubToDate)) {
+    if (dashboardView === 'hub' && (selectedHub || selectedDate || hubFromDate || hubToDate || (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL'))) {
+      const filterDashboardMetrics = () => {
+        let filteredMetrics = dashboardMetrics
+
+        if (selectedHub && selectedHub !== 'All Hubs') {
+          filteredMetrics = filteredMetrics.filter(m => normalizeHub(m.hub) === selectedHubNorm)
+        }
+
+        if (hubFromDate && hubToDate) {
+          filteredMetrics = filteredMetrics.filter(m => {
+            const recordDate = m.date?.split('T')[0] || m.date
+            return recordDate >= hubFromDate && recordDate <= hubToDate
+          })
+        } else if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
+          const latestMetricDate = getMaxDateString(filteredMetrics.map(m => m.date?.split('T')[0] || m.date))
+          const bounds = getRangeBounds(hubDeliveryTrendRange, latestMetricDate)
+          if (bounds.start && bounds.end) {
+            filteredMetrics = filteredMetrics.filter(m => {
+              const recordDate = m.date?.split('T')[0] || m.date
+              return recordDate >= bounds.start && recordDate <= bounds.end
+            })
+          } else {
+            filteredMetrics = []
+          }
+        } else if (selectedDate) {
+          filteredMetrics = filteredMetrics.filter(m => {
+            const recordDate = m.date?.split('T')[0] || m.date
+            return recordDate === selectedDate
+          })
+        }
+
+        return filteredMetrics
+      }
+
+      const filteredMetrics = filterDashboardMetrics()
+      if (!performanceRecords.length && filteredMetrics.length > 0) {
+        const total = filteredMetrics.length
+        const sumRiders = filteredMetrics.reduce((sum, item) => sum + (item.riders || 0), 0)
+        const sumDelivered = filteredMetrics.reduce((sum, item) => sum + (item.delivered || 0), 0)
+        const sumOnHold = filteredMetrics.reduce((sum, item) => sum + (item.on_hold || 0), 0)
+        const avgSuccessRate = Math.round(filteredMetrics.reduce((sum, item) => sum + ((item.success_rate || 0) * 100), 0) / total)
+        const avgProductivity = Math.round(filteredMetrics.reduce((sum, item) => sum + (item.productivity || 0), 0) / total)
+        const avgClearFloor = Math.round(filteredMetrics.reduce((sum, item) => sum + (item.clear_floor_rate || 0), 0) / total)
+        const avgScorecard = (filteredMetrics.reduce((sum, item) => sum + (item.scorecard || 0), 0) / total).toFixed(1)
+
+        return {
+          successRate: avgSuccessRate,
+          activeRiders: sumRiders,
+          delivered: sumDelivered,
+          onHold: sumOnHold,
+          productivity: avgProductivity,
+          clearFloorRate: avgClearFloor,
+          scorecard: avgScorecard
+        }
+      }
+
       let filteredPerformance = performanceRecords
       let filteredKPI = kpiData
       
@@ -1109,53 +1187,82 @@ function Dashboard() {
       ]
     }
     
-    // For overall view with cluster leader selected, continue with data calculation
-    // Don't return early - let the calculation proceed
-    
     let filteredKpiData = kpiData
+    const normalizeHub = (value) => String(value || '').trim().toLowerCase()
     
     // In Overall view with selectedCluster: filter KPI data for hubs assigned to that cluster leader
     if (dashboardView === 'overall' && selectedCluster) {
-      const normalizeHub = (value) => String(value || '').trim().toLowerCase()
       const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
       const assignedHubSet = new Set(assignedHubs.map(normalizeHub))
       filteredKpiData = filteredKpiData.filter(item => assignedHubSet.has(normalizeHub(item.operator_hub || item.hub)))
     }
     // In Hub view with selectedHub: filter by specific hub
     else if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
-      const selectedHubNorm = String(selectedHub).trim().toLowerCase()
+      const selectedHubNorm = normalizeHub(selectedHub)
       filteredKpiData = filteredKpiData.filter(item => {
-        const itemHubNorm = String(item.operator_hub || '').trim().toLowerCase()
-        return itemHubNorm === selectedHubNorm
+        return normalizeHub(item.operator_hub || item.hub) === selectedHubNorm
       })
     }
     
-    // Filter by date range (From/To dates take priority in Hub view)
-    if (dashboardView === 'hub' && hubFromDate && hubToDate) {
-      filteredKpiData = filteredKpiData.filter(item => {
-        const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
-        return itemDate >= hubFromDate && itemDate <= hubToDate
-      })
-    } else if (dashboardView === 'hub' && hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
-      const latestKpiDate = getMaxDateString(filteredKpiData.map(item => item.date?.split('T')[0] || item.date))
-      const bounds = getRangeBounds(hubDeliveryTrendRange, latestKpiDate)
-      if (bounds.start && bounds.end) {
+    // Apply date range filtering
+    if (dashboardView === 'hub') {
+      // From/To dates take priority
+      if (hubFromDate && hubToDate) {
         filteredKpiData = filteredKpiData.filter(item => {
           const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
-          return itemDate >= bounds.start && itemDate <= bounds.end
+          return itemDate >= hubFromDate && itemDate <= hubToDate
         })
-      } else {
-        filteredKpiData = []
+      } 
+      // Else use trend range (L7D, P7D, MTD)
+      else if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
+        const metricRange = getHubMetricDateRange({
+          selectedHub,
+          hubFromDate,
+          hubToDate,
+          selectedDate,
+          hubDeliveryTrendRange
+        })
+
+        if (!metricRange) {
+          filteredKpiData = []
+        } else {
+          filteredKpiData = filteredKpiData.filter(item => {
+            const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
+            return itemDate >= metricRange.start && itemDate <= metricRange.end
+          })
+        }
+      } 
+      // Fallback to single date if neither range nor trend is set
+      else if (selectedDate) {
+        filteredKpiData = filteredKpiData.filter(item => {
+          const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
+          return itemDate === selectedDate
+        })
       }
-    } else if (selectedDate) {
-      // Fallback to single date if no range is set
+    } 
+    // Overall view - apply date filter if selectedDate is set
+    else if (dashboardView === 'overall' && selectedDate) {
       filteredKpiData = filteredKpiData.filter(item => {
         const itemDate = item.date?.split('T')[0] || item.date?.split(' ')[0] || item.date
         return itemDate === selectedDate
       })
-    } else if (dashboardView === 'overall' && selectedCluster) {
-      // For Overall view with cluster leader selected, use all available data
-      // No date filtering - calculate from all data
+    }
+
+    if (!filteredKpiData.length) {
+      return []
+    }
+
+    const hasClearFloorData = filteredKpiData.some(item => {
+      const value = parseFloat(item.cfr)
+      return !Number.isNaN(value)
+    })
+    const hasScorecardData = filteredKpiData.some(item => {
+      const value = parseFloat(item.sr)
+      return !Number.isNaN(value)
+    })
+
+    if (!hasClearFloorData || !hasScorecardData) {
+      return []
     }
     
     const kpiFields = [
@@ -3011,47 +3118,55 @@ const chartDomain = useMemo(() => {
               <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
               <h3 className="text-sm font-semibold text-white tracking-wide">KPI Distribution</h3>
             </div>
-            <ResponsiveContainer width="100%" height={300}>
-              <RadarChart cx="50%" cy="50%" outerRadius="55%" data={kpiGradeData}>
-                <PolarGrid stroke="#334155" />
-                <PolarAngleAxis
-                  dataKey="name"
-                  tick={{ fill: '#94a3b8', fontSize: 8 }}
-                  tickFormatter={(value) => {
-                    const item = kpiGradeData.find(kpi => kpi.name === value)
-                    return item ? `${value} ${item.value}%` : value
-                  }}
-                />
-                <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
-                <Radar
-                  name="KPI"
-                  dataKey="value"
-                  stroke="#a83030"
-                  strokeWidth={2}
-                  fill="#a83030"
-                  fillOpacity={0.3}
-                />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1e293b', 
-                    border: '1px solid #334155', 
-                    borderRadius: '6px',
-                    color: '#fff',
-                    fontSize: '11px',
-                    boxShadow: '0 0 20px rgba(0,0,0,0.5)'
-                  }} 
-                />
-              </RadarChart>
-            </ResponsiveContainer>
-            {/* KPI Percentage Labels */}
-            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-              {kpiGradeData.map((kpi, index) => (
-                <div key={kpi.name} className="flex items-center justify-between bg-slate-700/30 rounded px-2 py-1">
-                  <span className="text-slate-400 truncate">{kpi.name}</span>
-                  <span className="text-white font-mono font-semibold">{kpi.value}%</span>
+            {kpiGradeData.length > 0 ? (
+              <>
+                <ResponsiveContainer width="100%" height={300}>
+                  <RadarChart cx="50%" cy="50%" outerRadius="55%" data={kpiGradeData}>
+                    <PolarGrid stroke="#334155" />
+                    <PolarAngleAxis
+                      dataKey="name"
+                      tick={{ fill: '#94a3b8', fontSize: 8 }}
+                      tickFormatter={(value) => {
+                        const item = kpiGradeData.find(kpi => kpi.name === value)
+                        return item ? `${value} ${item.value}%` : value
+                      }}
+                    />
+                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
+                    <Radar
+                      name="KPI"
+                      dataKey="value"
+                      stroke="#a83030"
+                      strokeWidth={2}
+                      fill="#a83030"
+                      fillOpacity={0.3}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: '#1e293b', 
+                        border: '1px solid #334155', 
+                        borderRadius: '6px',
+                        color: '#fff',
+                        fontSize: '11px',
+                        boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                      }} 
+                    />
+                  </RadarChart>
+                </ResponsiveContainer>
+                {/* KPI Percentage Labels */}
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  {kpiGradeData.map((kpi) => (
+                    <div key={kpi.name} className="flex items-center justify-between bg-slate-700/30 rounded px-2 py-1">
+                      <span className="text-slate-400 truncate">{kpi.name}</span>
+                      <span className="text-white font-mono font-semibold">{kpi.value}%</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-center rounded-lg bg-slate-800/80 border border-slate-600/50 p-6 text-center text-slate-400">
+                No KPI distribution data available for this hub and selected range.
+              </div>
+            )}
           </div>
         </div>
         ) : (
