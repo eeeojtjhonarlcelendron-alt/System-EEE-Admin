@@ -3155,11 +3155,6 @@ const hubLevelGraphComparison = useMemo(() => {
                       Graph
                     </button>
                   </div>
-                  {hubDeliveryTrendDateLabel && (
-                    <span className="text-slate-400 text-[11px] whitespace-nowrap">
-                      {hubDeliveryTrendDateLabel}
-                    </span>
-                  )}
                 </div>
                 {/* Category Filter */}
                 <select 
@@ -3337,6 +3332,13 @@ const hubLevelGraphComparison = useMemo(() => {
               </div>
             )}
           </ResponsiveContainer>
+            {hubDeliveryTrendDateLabel && (
+              <div className="flex justify-center mt-3">
+                <span className="text-slate-400 text-[12px] font-medium">
+                  {hubDeliveryTrendDateLabel}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Graph Comparison - Period Comparison Bar Chart */}
