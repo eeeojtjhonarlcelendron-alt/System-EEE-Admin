@@ -982,6 +982,27 @@ function Dashboard() {
       }
       
       // Calculate averages from Performance and KPI data
+      if (filteredPerformance.length === 0 && filteredMetrics.length > 0) {
+        const total = filteredMetrics.length
+        const avgSuccessRate = Math.round(filteredMetrics.reduce((sum, item) => sum + ((item.success_rate || 0) * 100), 0) / total)
+        const sumRiders = filteredMetrics.reduce((sum, item) => sum + (item.riders || 0), 0)
+        const sumDelivered = filteredMetrics.reduce((sum, item) => sum + (item.delivered || 0), 0)
+        const sumOnHold = filteredMetrics.reduce((sum, item) => sum + (item.on_hold || 0), 0)
+        const avgProductivity = Math.round(filteredMetrics.reduce((sum, item) => sum + (item.productivity || 0), 0) / total)
+        const avgClearFloor = Math.round(filteredMetrics.reduce((sum, item) => sum + (item.clear_floor_rate || 0), 0) / total)
+        const avgScorecard = (filteredMetrics.reduce((sum, item) => sum + (item.scorecard || 0), 0) / total).toFixed(1)
+
+        return {
+          successRate: avgSuccessRate,
+          activeRiders: sumRiders,
+          delivered: sumDelivered,
+          onHold: sumOnHold,
+          productivity: avgProductivity,
+          clearFloorRate: avgClearFloor,
+          scorecard: avgScorecard
+        }
+      }
+
       if (filteredPerformance.length === 0 && filteredKPI.length === 0) {
         return {
           successRate: 0,
@@ -3072,9 +3093,9 @@ const hubLevelGraphComparison = useMemo(() => {
       {dashboardView === 'hub' && (
       <div className="space-y-4">
         {/* Top Row: Delivery Trend and Graph Comparison */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Delivery Performance - Area/Bar Chart */}
-          <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+          <div className="lg:col-span-2 relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
