@@ -102,29 +102,68 @@ function Rider() {
             })
           }
           
+          // Determine the latest available record date in the dataset for status reference
+          const referenceDate = performanceData
+            .map(p => p.date)
+            .filter(Boolean)
+            .map(dateStr => new Date(dateStr).getTime())
+            .reduce((max, current) => Math.max(max, current), 0)
+
+          const referenceDay = referenceDate ? new Date(referenceDate) : new Date()
+
+          const parseDate = (value) => {
+            if (!value) return null
+            const date = new Date(value)
+            return Number.isNaN(date.getTime()) ? null : date
+          }
+
+          const hasRecordWithinWindow = (records, start, end) => {
+            return records.some(record => {
+              const recordDate = parseDate(record.date)
+              return recordDate && recordDate >= start && recordDate <= end
+            })
+          }
+
           // Calculate deployment dates for all riders
           const allRiders = Array.from(ridersMap.values()).map(rider => {
             const riderRecords = performanceData.filter(p => p.rider_id === rider.rider_id)
-            
+
             let deploymentDate = rider.deployment_date || 'N/A'
             let lastActiveDate = rider.last_active || 'N/A'
-            
+
             if (riderRecords.length > 0) {
               const sortedDates = riderRecords
                 .map(p => p.date)
                 .filter(Boolean)
                 .sort((a, b) => new Date(a) - new Date(b))
-                
+
               if (sortedDates.length > 0) {
                 deploymentDate = sortedDates[0].split('T')[0] || sortedDates[0]
                 lastActiveDate = sortedDates[sortedDates.length - 1].split('T')[0] || sortedDates[sortedDates.length - 1]
               }
             }
-            
+
+            let status = rider.status || 'Active'
+            const lastActiveObj = parseDate(lastActiveDate)
+            if (lastActiveObj) {
+              const windowStart = new Date(lastActiveObj)
+              windowStart.setDate(windowStart.getDate() + 1)
+              const windowEnd = new Date(lastActiveObj)
+              windowEnd.setDate(windowEnd.getDate() + 30)
+
+              const hasFutureRecord = hasRecordWithinWindow(riderRecords, windowStart, windowEnd)
+              if (!hasFutureRecord && referenceDay > windowEnd) {
+                status = 'Inactive'
+              } else if (hasFutureRecord) {
+                status = 'Active'
+              }
+            }
+
             return {
               ...rider,
               deployment_date: deploymentDate,
-              last_active: lastActiveDate
+              last_active: lastActiveDate,
+              status
             }
           })
           

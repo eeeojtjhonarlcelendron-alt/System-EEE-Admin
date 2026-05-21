@@ -457,15 +457,19 @@ function Dashboard() {
         const ridersResult = await incrementProgress(currentProgress, 65, 'Loading rider information...', () => getRiders())
         currentProgress = 65
         
-        // Stage 5: Fetch KPI metrics by hub (using optimized RPC) (75%)
-        const kpiMetricsResult = await incrementProgress(currentProgress, 75, 'Fetching KPI metrics by hub...', () => getKPIMetricsByHub())
-        currentProgress = 75
+        // Stage 5: Fetch recent performance records (70%)
+        const performanceResult = await incrementProgress(currentProgress, 70, 'Loading recent performance records...', () => getRecentPerformanceRecords(30))
+        currentProgress = 70
         
-        // Stage 6: Fetch overall KPI metrics (using optimized RPC) (85%)
-        const overallKpiResult = await incrementProgress(currentProgress, 85, 'Fetching overall KPI metrics...', () => getOverallKPIMetrics())
-        currentProgress = 85
+        // Stage 6: Fetch KPI metrics by hub (80%)
+        const kpiMetricsResult = await incrementProgress(currentProgress, 80, 'Fetching KPI metrics by hub...', () => getKPIMetricsByHub())
+        currentProgress = 80
         
-        // Stage 7: Fetch raw KPI records for KPI distribution charts
+        // Stage 7: Fetch overall KPI metrics (90%)
+        const overallKpiResult = await incrementProgress(currentProgress, 90, 'Fetching overall KPI metrics...', () => getOverallKPIMetrics())
+        currentProgress = 90
+        
+        // Stage 8: Fetch raw KPI records for KPI distribution charts (95%)
         const kpiPageResult = await incrementProgress(currentProgress, 95, 'Fetching KPI records for distribution chart...', () => getKpiRecords())
         currentProgress = 95
         
@@ -503,6 +507,10 @@ function Dashboard() {
             }))
           
           setPerformanceData(chartData)
+        }
+
+        if (performanceResult?.data) {
+          setPerformanceRecords(performanceResult.data)
         }
         
         if (ridersResult.data) {
@@ -676,11 +684,12 @@ function Dashboard() {
     if (!performanceRecords.length) {
       return []
     }
+
+    if (!selectedHub || selectedHub === 'All Hubs') {
+      return []
+    }
     
-    let filtered = ridersData
-    
-    // Filter by hub
-    filtered = filtered.filter(rider => rider.operator_hub === selectedHub)
+    let filtered = ridersData.filter(rider => rider.operator_hub === selectedHub)
     
     let rangeStart = ''
     let rangeEnd = ''
@@ -698,13 +707,14 @@ function Dashboard() {
       rangeEnd = bounds.end
     }
 
-    if (rangeStart && rangeEnd) {
-      filtered = filtered.filter(rider => {
-        if (!rider.last_active || rider.last_active === 'N/A') return false
-        const lastActiveDate = rider.last_active.split('T')[0] || rider.last_active
-        return lastActiveDate >= rangeStart && lastActiveDate <= rangeEnd
-      })
-    }
+    // For Riders No Route, we want to show ALL riders (including those with no activity)
+    // even if they don't fit the date range. This is because riders with no activity
+    // are exactly the ones we want to track as "no route"
+    
+    // Note: We don't apply date range filtering to Riders No Route because:
+    // 1. Riders with no last_active (N/A) represent riders who haven't been deployed or have no records
+    // 2. These are important to show as "no route" riders
+    // 3. The Riders No Route section inherently shows riders outside normal delivery flow
     
     // Find riders with no performance records
     const ridersNoRoute = filtered
@@ -1772,13 +1782,7 @@ const hubLevelGraphComparison = useMemo(() => {
       }
     }
 
-    // Filter by hub if selected
-    let filteredRiders = ridersData
-    if (selectedHub && selectedHub !== 'All Hubs') {
-      filteredRiders = filteredRiders.filter(r => r.operator_hub === selectedHub)
-    }
-
-    // If no hub selected, return empty
+    // Only show metrics if a specific hub is selected
     if (!selectedHub || selectedHub === 'All Hubs') {
       return {
         totalRiders: 0,
@@ -1789,6 +1793,9 @@ const hubLevelGraphComparison = useMemo(() => {
         attritionRiders: []
       }
     }
+
+    // Filter by the selected hub
+    let filteredRiders = ridersData.filter(r => r.operator_hub === selectedHub)
 
     // Calculate date range based on hubFromDate/hubToDate or global hub range filter
     let startDate, endDate
@@ -1830,20 +1837,45 @@ const hubLevelGraphComparison = useMemo(() => {
       return false
     })
 
+    // Helper function to determine if a rider is inactive (same logic as Rider.jsx)
+    const isRiderInactive = (rider) => {
+      if (!rider.last_active || rider.last_active === 'N/A') {
+        return false // Can't determine without last_active date
+      }
+      
+      const lastActiveDate = new Date(rider.last_active)
+      const windowStart = new Date(lastActiveDate)
+      windowStart.setDate(windowStart.getDate() + 1)
+      const windowEnd = new Date(lastActiveDate)
+      windowEnd.setDate(windowEnd.getDate() + 30)
+      
+      const referenceDate = new Date() // Today's date
+      
+      // Check if there are any performance records in the 30-day window
+      const hasRecordInWindow = performanceRecords.some(record => {
+        if (String(record.rider_id) !== String(rider.rider_id)) return false
+        const recordDate = new Date(record.date)
+        return recordDate >= windowStart && recordDate <= windowEnd
+      })
+      
+      // Rider is inactive if: no records in window AND reference date is after the window
+      return !hasRecordInWindow && referenceDate > windowEnd
+    }
+
     const totalRiders = filteredRiders.length
-    const activeRiders = filteredRiders.filter(r => r.status === 'Active').length
-    const inactiveRiders = totalRiders - activeRiders
+    const inactiveRidersList = filteredRiders.filter(r => isRiderInactive(r))
+    const inactiveRiders = inactiveRidersList.length
+    const activeRiders = totalRiders - inactiveRiders
     const retentionRate = totalRiders > 0 ? Math.round((activeRiders / totalRiders) * 100 * 10) / 10 : 0
     const attritionRate = totalRiders > 0 ? Math.round((inactiveRiders / totalRiders) * 100 * 10) / 10 : 0
 
     // Get inactive riders for the breakdown table
-    const attritionRiders = filteredRiders
-      .filter(r => r.status !== 'Active')
+    const attritionRiders = inactiveRidersList
       .map(r => ({
         id: r.rider_id,
         name: r.rider_name,
         lastActive: r.last_active || 'N/A',
-        status: r.status || 'Inactive'
+        status: 'Inactive'
       }))
 
     return {
@@ -1854,7 +1886,7 @@ const hubLevelGraphComparison = useMemo(() => {
       attritionRate,
       attritionRiders
     }
-  }, [ridersData, selectedHub, selectedDate, hubFromDate, hubToDate, hubDeliveryTrendRange])
+  }, [ridersData, performanceRecords, selectedHub, selectedDate, hubFromDate, hubToDate, hubDeliveryTrendRange])
 
   // Calculate P7D vs L7D comparison data for Overall view using REAL data
   const getComparisonData = useMemo(() => {
@@ -3420,42 +3452,46 @@ const hubLevelGraphComparison = useMemo(() => {
               <h3 className="text-sm font-semibold text-white tracking-wide">Riders No Route</h3>
             </div>
             <span className="text-lg font-bold text-maroon-400 font-mono">
-              {filteredRidersNoRoute.length}
+              {selectedHub && selectedHub !== 'All Hubs' ? filteredRidersNoRoute.length : 0}
             </span>
           </div>
           
           <div className="bg-slate-700/30 rounded-lg overflow-hidden backdrop-blur-sm border border-slate-600/30">
             <div className="max-h-[300px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-slate-800">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-slate-700/80 backdrop-blur-sm">
-                    <th className="px-3 py-2 text-left font-semibold text-slate-300 uppercase text-[10px] tracking-wider">Rider ID</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-300 uppercase text-[10px] tracking-wider">Rider Name</th>
-                    <th className="px-3 py-2 text-center font-semibold text-slate-300 uppercase text-[10px] tracking-wider">Deployed Date</th>
-                    <th className="px-3 py-2 text-center font-semibold text-slate-300 uppercase text-[10px] tracking-wider">Last Active Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/50">
-                  {filteredRidersNoRoute.map((rider, index) => (
-                    <tr key={rider.riderId} className="hover:bg-slate-700/30 transition">
-                      <td className="px-3 py-2">
-                        <span className="text-white font-medium font-mono">{rider.riderId}</span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className="text-white font-medium truncate max-w-[150px] block" title={rider.riderName}>
-                          {rider.riderName}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <span className="text-slate-300 font-mono">{rider.deploymentDate}</span>
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <span className="text-emerald-400 font-mono">{rider.lastActive}</span>
-                      </td>
+              {selectedHub && selectedHub !== 'All Hubs' ? (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-slate-700/80 backdrop-blur-sm">
+                      <th className="px-3 py-2 text-left font-semibold text-slate-300 uppercase text-[10px] tracking-wider">Rider ID</th>
+                      <th className="px-3 py-2 text-left font-semibold text-slate-300 uppercase text-[10px] tracking-wider">Rider Name</th>
+                      <th className="px-3 py-2 text-center font-semibold text-slate-300 uppercase text-[10px] tracking-wider">Deployed Date</th>
+                      <th className="px-3 py-2 text-center font-semibold text-slate-300 uppercase text-[10px] tracking-wider">Last Active Date</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700/50">
+                    {filteredRidersNoRoute.map((rider, index) => (
+                      <tr key={rider.riderId} className="hover:bg-slate-700/30 transition">
+                        <td className="px-3 py-2">
+                          <span className="text-white font-medium font-mono">{rider.riderId}</span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className="text-white font-medium truncate max-w-[150px] block" title={rider.riderName}>
+                            {rider.riderName}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className="text-slate-300 font-mono">{rider.deploymentDate}</span>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className="text-emerald-400 font-mono">{rider.lastActive}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="p-4 text-center text-slate-400 text-xs">Select a hub filter to view Riders No Route.</div>
+              )}
             </div>
           </div>
           <p className="text-slate-500 text-[10px] mt-2 text-right font-mono">As of {selectedDate}</p>
