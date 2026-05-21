@@ -232,6 +232,8 @@ function Dashboard() {
   const [riderToDate, setRiderToDate] = useState('') // To date for Rider Level filter
   const [hubFromDate, setHubFromDate] = useState('') // From date for Hub Level filter
   const [hubToDate, setHubToDate] = useState('') // To date for Hub Level filter
+  const [hubCompareDateA, setHubCompareDateA] = useState('') // First compare date for Hub Delivery Trend
+  const [hubCompareDateB, setHubCompareDateB] = useState('') // Second compare date for Hub Delivery Trend
   const [hubDeliveryTrendTab, setHubDeliveryTrendTab] = useState('chart') // 'chart' or 'graph' for Hub Delivery Trend
   const [hubDeliveryTrendRange, setHubDeliveryTrendRange] = useState('L7D') // 'L7D', 'P7D', 'MTD', or 'ALL'
   const [riderDeliveryTrendTab, setRiderDeliveryTrendTab] = useState('chart') // 'chart' or 'graph' for Rider Delivery Trend
@@ -1360,7 +1362,13 @@ const filteredChartData = useMemo(() => {
       }
     }
 
-    if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL' && filtered.length > 0) {
+    if (hubCompareDateA && hubCompareDateB) {
+      console.log('Applying hub compare dates:', hubCompareDateA, hubCompareDateB)
+      filtered = filtered.filter(item => {
+        const itemDate = String(item.date || '').split('T')[0]
+        return itemDate === hubCompareDateA || itemDate === hubCompareDateB
+      })
+    } else if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL' && filtered.length > 0) {
       const parsedDates = filtered
         .map(item => String(item.date || '').split('T')[0])
         .filter(Boolean)
@@ -1619,7 +1627,7 @@ const filteredChartData = useMemo(() => {
   }
 
   return []
-}, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedCluster, hubToClusterMap, hubFromDate, hubToDate, selectedCategory, hubDeliveryTrendRange])
+}, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedCluster, hubToClusterMap, hubFromDate, hubToDate, hubCompareDateA, hubCompareDateB, selectedCategory, hubDeliveryTrendRange])
 
 const hubDeliveryTrendDateLabel = useMemo(() => {
   const formatDisplayDate = (dateStr) => {
@@ -1630,6 +1638,10 @@ const hubDeliveryTrendDateLabel = useMemo(() => {
 
   if (hubFromDate && hubToDate) {
     return `${formatDisplayDate(hubFromDate)} to ${formatDisplayDate(hubToDate)}`
+  }
+
+  if (hubCompareDateA && hubCompareDateB) {
+    return `${formatDisplayDate(hubCompareDateA)} vs ${formatDisplayDate(hubCompareDateB)}`
   }
 
   if (filteredChartData.length > 0) {
@@ -1646,7 +1658,7 @@ const hubDeliveryTrendDateLabel = useMemo(() => {
   if (hubDeliveryTrendRange === 'P7D') return 'Prior 7 Days'
   if (hubDeliveryTrendRange === 'MTD') return 'Month to Date'
   return 'All Dates'
-}, [hubFromDate, hubToDate, hubDeliveryTrendRange, filteredChartData])
+}, [hubFromDate, hubToDate, hubCompareDateA, hubCompareDateB, hubDeliveryTrendRange, filteredChartData])
 
 const chartDomain = useMemo(() => {
   if (!filteredChartData || filteredChartData.length === 0) {
@@ -2887,6 +2899,23 @@ const hubLevelGraphComparison = useMemo(() => {
               type="date"
               value={hubToDate}
               onChange={(e) => setHubToDate(e.target.value)}
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
+            />
+          </div>
+
+          {/* Compare Dates */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-[hsl(220,8%,55%)]">Compare:</span>
+            <input
+              type="date"
+              value={hubCompareDateA}
+              onChange={(e) => setHubCompareDateA(e.target.value)}
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
+            />
+            <input
+              type="date"
+              value={hubCompareDateB}
+              onChange={(e) => setHubCompareDateB(e.target.value)}
               className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
             />
           </div>
