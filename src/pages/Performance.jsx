@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, FileDown, Plus, Pencil, Trash2, Calendar, Building2, MapPin } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { getPerformanceRecords, getPerformanceRecordsPaginated, batchInsertPerformanceRecords, deleteAllPerformanceRecords, updatePerformanceRecord, getPerformanceRecordByRiderAndDate, getPerformanceRecordsByDateRange, refreshRiders, deletePerformanceRecord, insertSinglePerformanceRecord, getRiders, syncRidersFromPerformance } from '../lib/data'
-import { SkeletonPerformance, ProgressBarLoader } from '../components/Skeleton'
+import { SkeletonPerformance } from '../components/Skeleton'
 
 function parseDate(dateValue) {
   if (!dateValue) return null
@@ -63,8 +63,6 @@ function Performance() {
   const [filteredData, setFilteredData] = useState([])
   const [loading, setLoading] = useState(true) // Initial page load blocking screen
   const [isFiltering, setIsFiltering] = useState(false) // Non-blocking filter updates
-  const [loadingProgress, setLoadingProgress] = useState(0)
-  const [loadingStage, setLoadingStage] = useState('')
   const [totalCount, setTotalCount] = useState(0)
   const [showFilters, setShowFilters] = useState(false)
   const [filters, setFilters] = useState({
@@ -123,8 +121,6 @@ function Performance() {
       } else {
         setIsFiltering(true)
       }
-      setLoadingProgress(0)
-      setLoadingStage('Loading performance records...')
 
       // Fetch current page of performance records from the server
       const { data: records, error, totalCount: count } = await getPerformanceRecordsPaginated(
@@ -171,8 +167,6 @@ function Performance() {
       } else {
         setIsFiltering(false)
       }
-      setLoadingProgress(100)
-      setLoadingStage('')
     }
   }
 
@@ -634,8 +628,6 @@ function Performance() {
       <div className="space-y-6 relative">
         {/* Skeleton Loading Screen */}
         <SkeletonPerformance />
-        {/* Progress Loader - Centered overlay */}
-        <ProgressBarLoader progress={loadingProgress} loadingStage={loadingStage} />
       </div>
     )
   }

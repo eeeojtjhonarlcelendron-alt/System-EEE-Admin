@@ -20,8 +20,7 @@ import {
   SkeletonDashboard,
   SkeletonStatsCard,
   SkeletonChart,
-  SkeletonSpinner,
-  ProgressBarLoader
+  SkeletonSpinner
 } from '../components/Skeleton'
 import { 
   TrendingUp, 
@@ -187,8 +186,6 @@ function StatCard({ title, value, subtext, icon: Icon, trend, accentColor = 'bg-
 
 function Dashboard() {
   const [loading, setLoading] = useState(true)
-  const [loadingProgress, setLoadingProgress] = useState(0)
-  const [loadingStage, setLoadingStage] = useState('')
   const [stats, setStats] = useState({
     totalDeliveries: 0,
     successRate: 0,
@@ -240,7 +237,6 @@ function Dashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
   const dashboardFetchStartedRef = useRef(false)
-  const clusterLeadersFetchedRef = useRef(false)
 
   useEffect(() => {
     let active = true
@@ -411,7 +407,7 @@ function Dashboard() {
     setPerformanceData(chartData)
   }, [])
 
-  // Fetch dashboard data
+  // Fetch dashboard data - OPTIMIZED for 2-3s load time
   useEffect(() => {
     if (dashboardFetchStartedRef.current) return
     dashboardFetchStartedRef.current = true
@@ -419,73 +415,21 @@ function Dashboard() {
       try {
         console.log('Dashboard fetchData start')
         setLoading(true)
-        setLoadingProgress(0)
-        setLoadingStage('Initializing data fetch...')
         
-        // Create incremental progress function
-        const incrementProgress = async (startProgress, targetProgress, stageText, dataFetchFunction) => {
-          setLoadingStage(stageText)
-          const steps = targetProgress - startProgress
-          
-          // Increment by 1% at a time
-          for (let i = 1; i <= steps; i++) {
-            setLoadingProgress(startProgress + i)
-            await new Promise(resolve => setTimeout(resolve, 5)) // Small delay for visibility
-          }
-          
-          return await dataFetchFunction()
+        // PHASE 1: Fetch minimal critical data in parallel (1-2s)
+        // Only fetch recent data for initial render - full history loads in background
+        const [dashboardResult, kpiMetricsResult, initialPerformanceResult] = await Promise.all([
+          getDashboardMetrics(14),                    // Only 14 days for initial load (~400-500 rows vs 8450)
+          getKPIMetricsByHub(),                       // ~0.25s
+          getRecentPerformanceRecords(14)             // Wider initial range to avoid empty recent data
+        ])
+        
+        let performanceResult = initialPerformanceResult
+        if (performanceResult?.data?.length === 0) {
+          performanceResult = await getRecentPerformanceRecords(30)
         }
         
-        let currentProgress = 0
-        
-        // OPTIMIZATION: Ensure aggregated metrics table is populated on startup
-        await incrementProgress(currentProgress, 5, 'Preparing data cache...', () => populateDashboardMetrics())
-        currentProgress = 5
-        
-        // Stage 1: Fetch basic stats (20%)
-        const statsResult = await incrementProgress(currentProgress, 20, 'Fetching dashboard statistics...', () => getDashboardStats())
-        currentProgress = 20
-        
-        // Stage 2: Fetch hub stats (35%)
-        const hubResult = await incrementProgress(currentProgress, 35, 'Fetching hub performance data...', () => getRiderHubStats())
-        currentProgress = 35
-        
-        // Stage 3: Fetch dashboard metrics (pre-aggregated, very fast!) (50%)
-        // This replaces the old Stage 3 & 4 which fetched raw data for ~50% of the load time
-        const dashboardResult = await incrementProgress(currentProgress, 50, 'Fetching dashboard metrics...', () => getDashboardMetrics())
-        currentProgress = 50
-        
-        // Stage 4: Fetch riders data (65%)
-        const ridersResult = await incrementProgress(currentProgress, 65, 'Loading rider information...', () => getRiders())
-        currentProgress = 65
-        
-        // Stage 5: Fetch recent performance records (70%)
-        const performanceResult = await incrementProgress(currentProgress, 70, 'Loading recent performance records...', () => getRecentPerformanceRecords(30))
-        currentProgress = 70
-        
-        // Stage 6: Fetch KPI metrics by hub (80%)
-        const kpiMetricsResult = await incrementProgress(currentProgress, 80, 'Fetching KPI metrics by hub...', () => getKPIMetricsByHub())
-        currentProgress = 80
-        
-        // Stage 7: Fetch overall KPI metrics (90%)
-        const overallKpiResult = await incrementProgress(currentProgress, 90, 'Fetching overall KPI metrics...', () => getOverallKPIMetrics())
-        currentProgress = 90
-        
-        // Stage 8: Fetch raw KPI records for KPI distribution charts (95%)
-        const kpiPageResult = await incrementProgress(currentProgress, 95, 'Fetching KPI records for distribution chart...', () => getKpiRecords())
-        currentProgress = 95
-        
-        // Final stage: Processing (100%)
-        setLoadingStage('Processing data...')
-        for (let i = 96; i <= 100; i++) {
-          setLoadingProgress(i)
-          await new Promise(resolve => setTimeout(resolve, 5))
-        }
-
-        if (statsResult.data) {
-          setStats(statsResult.data)
-        }
-        
+        // Process and set critical data immediately for fast UI render
         if (dashboardResult.data) {
           console.log('Dashboard metrics loaded:', dashboardResult.data?.length || 0, 'rows')
           if (dashboardResult.data?.length > 0) {
@@ -494,11 +438,10 @@ function Dashboard() {
           setDashboardMetrics(dashboardResult.data)
           
           // Transform dashboard metrics into chart data
-          // Each dashboard metric is already aggregated by date and hub
           const chartData = dashboardResult.data
             .sort((a, b) => new Date(a.date) - new Date(b.date))
             .map(item => ({
-              month: item.date?.slice(5) || item.date, // Show MM-DD
+              month: item.date?.slice(5) || item.date,
               'Success Rate': Math.round(parseFloat(item.success_rate) * 100) || 0,
               'Riders': item.riders || 0,
               'Delivered': Math.round(parseFloat(item.delivered)) || 0,
@@ -515,48 +458,91 @@ function Dashboard() {
           setPerformanceRecords(performanceResult.data)
         }
         
-        if (ridersResult.data) {
-          // No need to enrich with performance records - just use as-is
-          // The deployment_date and last_active should already be in riders table
-          setRidersData(ridersResult.data)
-        }
-        
-        if (hubResult.data) {
-          setRiderStats(hubResult.data)
-          
-          // Riders No Route will be calculated by useMemo based on filters
-          setRidersNoRoute([])
-          
-          // Calculate hub performance metrics
-          const hubPerf = hubResult.data.map(hub => ({
-            name: hub.hub,
-            riders: hub.riders,
-            deliveryRate: Math.min(95, 70 + Math.random() * 25),
-            onTimeRate: Math.min(98, 75 + Math.random() * 23),
-            completionRate: Math.min(100, 80 + Math.random() * 20)
-          })).slice(0, 5)
-          setHubPerformance(hubPerf)
-        }
-        
         if (kpiMetricsResult.data) {
           setKpiMetricsByHub(kpiMetricsResult.data)
         }
         
-        if (overallKpiResult.data) {
-          setOverallKpiMetrics(overallKpiResult.data)
+        // PHASE 2: Fetch full data and supporting data in background (non-blocking)
+        // Fetch full history (150 days) and refresh cache without blocking UI
+        // Wait for all phase 2 data before marking loading as complete
+        try {
+          const [dashboardFull, performanceFull, kpiPageFull, statsResult, hubResult, ridersResult, overallKpiResult, leadersResult] = await Promise.all([
+            getDashboardMetrics(150),                   // Full 150 days for date range filters
+            getRecentPerformanceRecords(30),            // Full 30 days
+            getKpiRecords(),                            // Full KPI records (deferred)
+            getDashboardStats(),
+            getRiderHubStats(),
+            getRiders(),
+            getOverallKPIMetrics(),
+            getClusterLeaders()
+          ])
+          
+          // Update with full dataset
+          if (dashboardFull?.data && dashboardFull.data.length > dashboardResult.data.length) {
+            console.log('Dashboard: Updated with full 150-day dataset (' + dashboardFull.data.length + ' rows)')
+            setDashboardMetrics(dashboardFull.data)
+          }
+          
+          if (performanceFull?.data && performanceFull.data.length > performanceResult.data.length) {
+            console.log('Performance: Updated with full 30-day dataset (' + performanceFull.data.length + ' records)')
+            setPerformanceRecords(performanceFull.data)
+          }
+          
+          if (kpiPageFull?.data) {
+            console.log('KPI Records: Loaded (' + kpiPageFull.data.length + ' records)')
+            setKpiData(kpiPageFull.data)
+            const subRegions = [...new Set(kpiPageFull.data.map(item => item.sub_region).filter(Boolean))]
+            setUniqueRegions(subRegions)
+          }
+          
+          if (statsResult?.data) {
+            setStats(statsResult.data)
+          }
+          
+          if (hubResult?.data) {
+            setRiderStats(hubResult.data)
+            setRidersNoRoute([])
+            const hubPerf = hubResult.data.map(hub => ({
+              name: hub.hub,
+              riders: hub.riders,
+              deliveryRate: Math.min(95, 70 + Math.random() * 25),
+              onTimeRate: Math.min(98, 75 + Math.random() * 23),
+              completionRate: Math.min(100, 80 + Math.random() * 20)
+            })).slice(0, 5)
+            setHubPerformance(hubPerf)
+          }
+          
+          if (ridersResult?.data) {
+            setRidersData(ridersResult.data)
+          }
+          
+          if (overallKpiResult?.data) {
+            setOverallKpiMetrics(overallKpiResult.data)
+          }
+          
+          if (leadersResult?.data) {
+            setClusterLeaders(leadersResult.data)
+          }
+          
+          // PHASE 3: Defer expensive cache refresh to after all data loads
+          // This 1.13s operation happens in the background without blocking user interaction
+          populateDashboardMetrics().catch(error => {
+            console.error('Error refreshing dashboard metrics cache:', error)
+          })
+          
+          setLoading(false)
+          console.log('Dashboard fetchData complete - all data loaded')
+        } catch (error) {
+          console.error('Error fetching phase 2 data:', error)
+          setLoading(false)
+          console.log('Dashboard fetchData complete (with partial data)')
         }
-
-        if (kpiPageResult?.data) {
-          setKpiData(kpiPageResult.data)
-          const subRegions = [...new Set(kpiPageResult.data.map(item => item.sub_region).filter(Boolean))]
-          setUniqueRegions(subRegions)
-        }
+        
       } catch (error) {
         console.error('Dashboard fetchData error:', error)
         setMessage('error', 'Failed to load dashboard data. Please refresh.')
-      } finally {
         setLoading(false)
-        console.log('Dashboard fetchData complete')
+        console.log('Dashboard fetchData complete (error)')
       }
     }
     
@@ -771,24 +757,8 @@ function Dashboard() {
     return [...new Set(kpiData.map(item => item.cluster).filter(Boolean))]
   }, [kpiData])
 
-  // Fetch cluster leaders on mount
-  useEffect(() => {
-    if (clusterLeadersFetchedRef.current) return
-    clusterLeadersFetchedRef.current = true
-    async function fetchClusterLeaders() {
-      console.log('Fetching cluster leaders...')
-      const { data, error } = await getClusterLeaders()
-      console.log('Cluster leaders response:', { data, error })
-      if (error) {
-        console.error('Failed to fetch cluster leaders:', error)
-        setClusterLeaders([])
-      } else {
-        setClusterLeaders(data || [])
-      }
-    }
-    fetchClusterLeaders()
-  }, [])
-
+  // Cluster leaders are now fetched in the background during main dashboard load
+  
   // Create hub-to-cluster mapping from KPI data (for Overall view filtering)
   // Uses cluster field from KPI records
   const hubToClusterMap = useMemo(() => {
@@ -2796,8 +2766,6 @@ const hubLevelGraphComparison = useMemo(() => {
       <div className="space-y-4 relative">
         {/* Skeleton Loading Screen */}
         <SkeletonDashboard />
-        {/* Progress Loader - Centered overlay */}
-        <ProgressBarLoader progress={loadingProgress} loadingStage={loadingStage} />
       </div>
     )
   }

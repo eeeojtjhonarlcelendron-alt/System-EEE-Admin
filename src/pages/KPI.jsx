@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, Calendar, Building2, MapPin, CheckCircle, AlertCircle, AlertTriangle, Users } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { getKpiRecords, batchInsertKpiRecords, deleteAllKpiRecords, getClusterLeaders } from '../lib/data'
-import { SkeletonKPI, ProgressBarLoader } from '../components/Skeleton'
+import { SkeletonKPI } from '../components/Skeleton'
 
 function parsePercentage(value) {
   if (value === null || value === undefined || value === '') return 0
@@ -72,8 +72,6 @@ function KPI() {
   const [data, setData] = useState([])
   const [filteredData, setFilteredData] = useState([])
   const [loading, setLoading] = useState(true)
-  const [loadingProgress, setLoadingProgress] = useState(0)
-  const [loadingStage, setLoadingStage] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [filters, setFilters] = useState({
     dateFrom: '',
@@ -102,43 +100,10 @@ function KPI() {
     async function fetchData() {
       try {
         setLoading(true)
-        setLoadingProgress(0)
-        setLoadingStage('Initializing KPI data fetch...')
-        
-        // Create incremental progress function
-        const incrementProgress = async (startProgress, targetProgress, stageText, dataFetchFunction) => {
-          setLoadingStage(stageText)
-          const steps = targetProgress - startProgress
-          
-          // Increment by 1% at a time
-          for (let i = 1; i <= steps; i++) {
-            setLoadingProgress(startProgress + i)
-            await new Promise(resolve => setTimeout(resolve, 20)) // Small delay for visibility
-          }
-          
-          return await dataFetchFunction()
-        }
-        
-        let currentProgress = 0
-        
-        // Stage 1: Fetch KPI records (50%)
-        const { data: records, error } = await incrementProgress(currentProgress, 50, 'Loading KPI records...', () => getKpiRecords())
-        currentProgress = 50
-        
-        // Stage 2: Process data (80%)
-        await incrementProgress(currentProgress, 80, 'Processing KPI data...', async () => {
-          if (!error && records) {
-            setData(records)
-            setFilteredData(records)
-          }
-        })
-        currentProgress = 80
-        
-        // Final stage: Complete (100%)
-        setLoadingStage('Finalizing...')
-        for (let i = 81; i <= 100; i++) {
-          setLoadingProgress(i)
-          await new Promise(resolve => setTimeout(resolve, 20))
+        const { data: records, error } = await getKpiRecords()
+        if (!error && records) {
+          setData(records)
+          setFilteredData(records)
         }
       } catch (error) {
         console.error('Error fetching KPI data:', error)
@@ -465,8 +430,6 @@ function KPI() {
       <div className="space-y-6 relative">
         {/* Skeleton Loading Screen */}
         <SkeletonKPI />
-        {/* Progress Loader - Centered overlay */}
-        <ProgressBarLoader progress={loadingProgress} loadingStage={loadingStage} />
       </div>
     )
   }

@@ -5,6 +5,49 @@ import { supabase } from './supabase'
 // This eliminates the need to transfer 167k rows to the browser.
 // Result: <200ms load time instead of 5-20 seconds
 
+// Helper: Parallelize paginated requests for MUCH faster data fetching
+// Instead of sequential requests, send all pages at once
+async function paginatedFetch(buildQuery, pageSize = 1000, estimatedTotalRows = null) {
+  try {
+    // First request to get total count
+    let firstPage = await buildQuery(0, pageSize)
+    if (firstPage.error) return { data: [], error: firstPage.error }
+    
+    const allData = [...firstPage.data]
+    if (firstPage.data.length < pageSize) {
+      return { data: allData, error: null } // Only one page needed
+    }
+    
+    // Estimate total pages and fetch all in parallel
+    const estimatedPages = estimatedTotalRows ? Math.ceil(estimatedTotalRows / pageSize) : 20
+    const parallelRequests = []
+    
+    for (let page = 1; page < estimatedPages; page++) {
+      parallelRequests.push(
+        buildQuery(page, pageSize)
+          .then(result => ({ page, result }))
+          .catch(err => ({ page, error: err }))
+      )
+    }
+    
+    // Wait for all pages in parallel
+    const results = await Promise.all(parallelRequests)
+    
+    // Collect results and stop when we hit empty page
+    for (const { page, result, error } of results) {
+      if (error) continue
+      if (!result.data || result.data.length === 0) break
+      allData.push(...result.data)
+      if (result.data.length < pageSize) break
+    }
+    
+    return { data: allData, error: null }
+  } catch (err) {
+    console.error('Error in paginatedFetch:', err)
+    return { data: [], error: err }
+  }
+}
+
 // Function to refresh dashboard_metrics on server startup
 // Call this ONCE when the app first loads, not on every page load
 export async function populateDashboardMetrics() {
@@ -44,37 +87,25 @@ export async function getDashboardMetrics(days = 150) {
     const fetchStart = performance.now()
     console.log(`📊 Fetching dashboard chart data (${days} days)...`)
     
-    // Fetch all aggregated metrics using RPC with pagination
-    // This bypasses Supabase's 1000-row REST API limit
-    let allData = []
-    let page = 0
-    let hasMore = true
     const pageSize = 1000
+    const { data, error } = await paginatedFetch(
+      async (page, pageSize) => {
+        return await supabase.rpc('get_dashboard_chart_data', {
+          days_back: days,
+          page_offset: page * pageSize,
+          page_size: pageSize
+        })
+      },
+      pageSize,
+      days > 100 ? 8500 : 500 // Estimate: ~60 rows per day
+    )
     
-    while (hasMore) {
-      const pageStart = performance.now()
-      const { data, error } = await supabase.rpc('get_dashboard_chart_data', {
-        days_back: days,
-        page_offset: page * pageSize,
-        page_size: pageSize
-      })
-      
-      if (error) {
-        console.error('❌ Error fetching dashboard metrics via RPC:', error)
-        return { data: allData.length > 0 ? allData : [], error }
-      }
-      
-      if (data && data.length > 0) {
-        allData = allData.concat(data)
-        const pageDuration = ((performance.now() - pageStart) / 1000).toFixed(2)
-        console.log(`  ✓ Page ${page}: ${data.length} rows (${pageDuration}s) - Total: ${allData.length}`)
-        page++
-      } else {
-        hasMore = false
-      }
+    if (error && data.length === 0) {
+      console.error('❌ Error fetching dashboard metrics via RPC:', error)
+      return { data: [], error }
     }
     
-    if (!allData || allData.length === 0) {
+    if (!data || data.length === 0) {
       console.log('📋 Dashboard metrics table is empty, populating from raw data...')
       await populateDashboardMetrics()
       // Retry after populating
@@ -82,9 +113,9 @@ export async function getDashboardMetrics(days = 150) {
     }
     
     const fetchDuration = ((performance.now() - fetchStart) / 1000).toFixed(2)
-    console.log(`✅ Fetched ${allData.length} dashboard metric rows via RPC pagination in ${fetchDuration}s`)
+    console.log(`✅ Fetched ${data.length} dashboard metric rows via RPC (parallel) in ${fetchDuration}s`)
     
-    return { data: allData || [], error: null }
+    return { data: data || [], error: null }
   } catch (err) {
     console.error('❌ Error in getDashboardMetrics:', err)
     return { data: [], error: err }
@@ -295,45 +326,35 @@ export async function getRecentPerformanceRecords(days = 30, filters = {}) {
   daysAgo.setDate(daysAgo.getDate() - days)
   const dateFilter = daysAgo.toISOString().split('T')[0]
 
-  const batchSize = 1000
-  let offset = 0
-  const allData = []
+  const pageSize = 1000
+  const { data, error } = await paginatedFetch(
+    async (page, pageSize) => {
+      let query = supabase
+        .from('performance_records')
+        .select('*')
+        .gte('date', dateFilter)
+        .order('date', { ascending: false })
+        .order('id', { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1)
 
-  while (true) {
-    let query = supabase
-      .from('performance_records')
-      .select('*')
-      .gte('date', dateFilter)
-      .order('date', { ascending: false })
-      .order('id', { ascending: false })
-      .range(offset, offset + batchSize - 1)
+      if (filters.hub) {
+        query = query.eq('hub', filters.hub)
+      }
+      if (filters.hubs && filters.hubs.length > 0) {
+        query = query.in('hub', filters.hubs)
+      }
 
-    if (filters.hub) {
-      query = query.eq('hub', filters.hub)
-    }
-    if (filters.hubs && filters.hubs.length > 0) {
-      query = query.in('hub', filters.hubs)
-    }
+      return await query
+    },
+    pageSize,
+    days > 20 ? 30000 : 5000 // Estimate total records
+  )
 
-    const { data, error } = await query
-    if (error) {
-      return { data: allData, error }
-    }
-
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allData.push(...data)
-    if (data.length < batchSize) {
-      break
-    }
-
-    offset += batchSize
+  if (error) {
+    console.error('getRecentPerformanceRecords error:', error)
   }
-
-  console.log(`getRecentPerformanceRecords: Finished with ${allData.length} records`)
-  return { data: allData, error: null }
+  console.log(`getRecentPerformanceRecords: Finished with ${data.length} records`)
+  return { data: data || [], error }
 }
 
 export async function createPerformanceRecord(record) {
@@ -416,50 +437,40 @@ export async function getKpiRecordsPaginated(page = 0, pageSize = 100, filters =
 export async function getKpiRecords(filters = {}) {
   console.log('getKpiRecords: Starting optimized full fetch...')
 
-  const batchSize = 1000
-  const allData = []
-  let offset = 0
+  const pageSize = 1000
+  const { data, error } = await paginatedFetch(
+    async (page, pageSize) => {
+      let query = supabase
+        .from('kpi_records')
+        .select('*')
+        .order('date', { ascending: false })
+        .order('id', { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1)
 
-  while (true) {
-    let query = supabase
-      .from('kpi_records')
-      .select('*')
-      .order('date', { ascending: false })
-      .order('id', { ascending: false })
-      .range(offset, offset + batchSize - 1)
+      if (filters.region) {
+        query = query.eq('region', filters.region)
+      }
+      if (filters.operator_hub) {
+        query = query.eq('operator_hub', filters.operator_hub)
+      }
+      if (filters.grade) {
+        query = query.eq('grade', filters.grade)
+      }
+      if (filters.search) {
+        query = query.or(`region.ilike.%${filters.search}%,operator_hub.ilike.%${filters.search}%`)
+      }
 
-    if (filters.region) {
-      query = query.eq('region', filters.region)
-    }
-    if (filters.operator_hub) {
-      query = query.eq('operator_hub', filters.operator_hub)
-    }
-    if (filters.grade) {
-      query = query.eq('grade', filters.grade)
-    }
-    if (filters.search) {
-      query = query.or(`region.ilike.%${filters.search}%,operator_hub.ilike.%${filters.search}%`)
-    }
+      return await query
+    },
+    pageSize,
+    900 // Estimate
+  )
 
-    const { data, error } = await query
-    if (error) {
-      return { data: allData, error }
-    }
-
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allData.push(...data)
-    if (data.length < batchSize) {
-      break
-    }
-
-    offset += batchSize
+  if (error) {
+    console.error('getKpiRecords error:', error)
   }
-
-  console.log(`getKpiRecords: Finished with ${allData.length} records`)
-  return { data: allData, error: null }
+  console.log(`getKpiRecords: Finished with ${data.length} records`)
+  return { data: data || [], error }
 }
 
 // Optimized function to fetch only recent KPI data for dashboard
@@ -470,54 +481,44 @@ export async function getRecentKpiRecords(days = 30, filters = {}) {
   daysAgo.setDate(daysAgo.getDate() - days)
   const dateFilter = daysAgo.toISOString().split('T')[0]
 
-  const batchSize = 1000
-  let offset = 0
-  const allData = []
+  const pageSize = 1000
+  const { data, error } = await paginatedFetch(
+    async (page, pageSize) => {
+      let query = supabase
+        .from('kpi_records')
+        .select('*')
+        .gte('date', dateFilter)
+        .order('date', { ascending: false })
+        .order('id', { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1)
 
-  while (true) {
-    let query = supabase
-      .from('kpi_records')
-      .select('*')
-      .gte('date', dateFilter)
-      .order('date', { ascending: false })
-      .order('id', { ascending: false })
-      .range(offset, offset + batchSize - 1)
+      if (filters.region) {
+        query = query.eq('region', filters.region)
+      }
+      if (filters.operator_hub) {
+        query = query.eq('operator_hub', filters.operator_hub)
+      }
+      if (filters.hubs && filters.hubs.length > 0) {
+        query = query.in('operator_hub', filters.hubs)
+      }
+      if (filters.grade) {
+        query = query.eq('grade', filters.grade)
+      }
+      if (filters.search) {
+        query = query.or(`region.ilike.%${filters.search}%,operator_hub.ilike.%${filters.search}%`)
+      }
 
-    if (filters.region) {
-      query = query.eq('region', filters.region)
-    }
-    if (filters.operator_hub) {
-      query = query.eq('operator_hub', filters.operator_hub)
-    }
-    if (filters.hubs && filters.hubs.length > 0) {
-      query = query.in('operator_hub', filters.hubs)
-    }
-    if (filters.grade) {
-      query = query.eq('grade', filters.grade)
-    }
-    if (filters.search) {
-      query = query.or(`region.ilike.%${filters.search}%,operator_hub.ilike.%${filters.search}%`)
-    }
+      return await query
+    },
+    pageSize,
+    days > 20 ? 5000 : 1000
+  )
 
-    const { data, error } = await query
-    if (error) {
-      return { data: allData, error }
-    }
-
-    if (!data || data.length === 0) {
-      break
-    }
-
-    allData.push(...data)
-    if (data.length < batchSize) {
-      break
-    }
-
-    offset += batchSize
+  if (error) {
+    console.error('getRecentKpiRecords error:', error)
   }
-
-  console.log(`getRecentKpiRecords: Finished with ${allData.length} records`)
-  return { data: allData, error: null }
+  console.log(`getRecentKpiRecords: Finished with ${data.length} records`)
+  return { data: data || [], error }
 }
 
 export async function createKpiRecord(record) {

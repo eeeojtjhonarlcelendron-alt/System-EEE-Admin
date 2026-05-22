@@ -4,8 +4,7 @@ import { getDashboardMetrics, getDashboardStats, getClusterLeaders } from '../li
 import { 
   SkeletonDashboard,
   SkeletonStatsCard,
-  SkeletonChart,
-  ProgressBarLoader
+  SkeletonChart
 } from '../components/Skeleton'
 import { 
   TrendingUp, 

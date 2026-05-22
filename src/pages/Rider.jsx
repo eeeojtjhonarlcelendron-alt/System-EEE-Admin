@@ -1,14 +1,12 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Filter, Search, X, ChevronDown, UserCheck, UserX, Loader2 } from 'lucide-react'
 import { getRiders, getPerformanceRecordsPaginated, getFuelManagementRiders } from '../lib/data'
-import { SkeletonRider, ProgressBarLoader } from '../components/Skeleton'
+import { SkeletonRider } from '../components/Skeleton'
 
 function Rider() {
   const [data, setData] = useState([])
   const [filteredData, setFilteredData] = useState([])
   const [loading, setLoading] = useState(true)
-  const [loadingProgress, setLoadingProgress] = useState(0)
-  const [loadingStage, setLoadingStage] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
   const [operatorHubFilter, setOperatorHubFilter] = useState('')
@@ -22,161 +20,124 @@ function Rider() {
     async function fetchData() {
       try {
         setLoading(true)
-        setLoadingProgress(0)
-        setLoadingStage('Initializing Rider data fetch...')
-        
-        // Create incremental progress function
-        const incrementProgress = async (startProgress, targetProgress, stageText, dataFetchFunction) => {
-          setLoadingStage(stageText)
-          const steps = targetProgress - startProgress
-          
-          // Increment by 1% at a time
-          for (let i = 1; i <= steps; i++) {
-            setLoadingProgress(startProgress + i)
-            await new Promise(resolve => setTimeout(resolve, 20)) // Small delay for visibility
-          }
-          
-          return await dataFetchFunction()
+
+        const [ridersResult, performanceResult, fuelResult] = await Promise.all([
+          getRiders(),
+          getPerformanceRecordsPaginated(0, 100000),
+          getFuelManagementRiders()
+        ])
+
+        const performanceData = performanceResult.data || []
+        setPerformanceRecords(performanceData)
+
+        const ridersMap = new Map()
+
+        if (ridersResult?.data) {
+          ridersResult.data.forEach(rider => {
+            ridersMap.set(rider.rider_id, { ...rider, source: 'riders_table' })
+          })
         }
-        
-        let currentProgress = 0
-        
-        // Stage 1: Fetch riders (25%)
-        const ridersResult = await incrementProgress(currentProgress, 25, 'Loading rider information...', () => getRiders())
-        currentProgress = 25
-        
-        // Stage 2: Fetch performance records (50%)
-        const performanceResult = await incrementProgress(currentProgress, 50, 'Loading performance records...', () => getPerformanceRecordsPaginated(0, 100000))
-        currentProgress = 50
-        
-        // Stage 3: Fetch fuel management riders (75%)
-        const fuelResult = await incrementProgress(currentProgress, 75, 'Loading fuel management data...', () => getFuelManagementRiders())
-        currentProgress = 75
-        
-        // Final stage: Process data (100%)
-        await incrementProgress(currentProgress, 100, 'Processing rider data...', async () => {
-          // Get performance records
-          const performanceData = performanceResult.data || []
-          setPerformanceRecords(performanceData)
-          
-          // Create unique riders map from all sources
-          const ridersMap = new Map()
-          
-          // Add riders from riders table
-          if (ridersResult.data) {
-            ridersResult.data.forEach(rider => {
-              ridersMap.set(rider.rider_id, { ...rider, source: 'riders_table' })
-            })
-          }
-          
-          // Add riders from fuel_management_riders (prefer this data if exists)
-          if (fuelResult.data) {
-            fuelResult.data.forEach(rider => {
-              const existing = ridersMap.get(rider.rider_id)
-              if (existing) {
-                // Merge data, keeping fuel_management_riders values
-                ridersMap.set(rider.rider_id, { 
-                  ...existing, 
-                  ...rider, 
-                  source: 'both' 
-                })
-              } else {
-                ridersMap.set(rider.rider_id, { ...rider, source: 'fuel_management' })
-              }
-            })
-          }
-          
-          // Add riders from performance records (as fallback)
-          if (performanceData) {
-            performanceData.forEach(record => {
-              if (!ridersMap.has(record.rider_id)) {
-                ridersMap.set(record.rider_id, {
-                  rider_id: record.rider_id,
-                  rider_name: record.driver_name,
-                  operator_hub: record.hub,
-                  region: record.region,
-                  status: 'Active',
-                  source: 'performance'
-                })
-              }
-            })
-          }
-          
-          // Determine the latest available record date in the dataset for status reference
-          const referenceDate = performanceData
-            .map(p => p.date)
-            .filter(Boolean)
-            .map(dateStr => new Date(dateStr).getTime())
-            .reduce((max, current) => Math.max(max, current), 0)
 
-          const referenceDay = referenceDate ? new Date(referenceDate) : new Date()
-
-          const parseDate = (value) => {
-            if (!value) return null
-            const date = new Date(value)
-            return Number.isNaN(date.getTime()) ? null : date
-          }
-
-          const hasRecordWithinWindow = (records, start, end) => {
-            return records.some(record => {
-              const recordDate = parseDate(record.date)
-              return recordDate && recordDate >= start && recordDate <= end
-            })
-          }
-
-          // Calculate deployment dates for all riders
-          const allRiders = Array.from(ridersMap.values()).map(rider => {
-            const riderRecords = performanceData.filter(p => p.rider_id === rider.rider_id)
-
-            let deploymentDate = rider.deployment_date || 'N/A'
-            let lastActiveDate = rider.last_active || 'N/A'
-
-            if (riderRecords.length > 0) {
-              const sortedDates = riderRecords
-                .map(p => p.date)
-                .filter(Boolean)
-                .sort((a, b) => new Date(a) - new Date(b))
-
-              if (sortedDates.length > 0) {
-                deploymentDate = sortedDates[0].split('T')[0] || sortedDates[0]
-                lastActiveDate = sortedDates[sortedDates.length - 1].split('T')[0] || sortedDates[sortedDates.length - 1]
-              }
-            }
-
-            let status = rider.status || 'Active'
-            const lastActiveObj = parseDate(lastActiveDate)
-            if (lastActiveObj) {
-              const windowStart = new Date(lastActiveObj)
-              windowStart.setDate(windowStart.getDate() + 1)
-              const windowEnd = new Date(lastActiveObj)
-              windowEnd.setDate(windowEnd.getDate() + 30)
-
-              const hasFutureRecord = hasRecordWithinWindow(riderRecords, windowStart, windowEnd)
-              if (!hasFutureRecord && referenceDay > windowEnd) {
-                status = 'Inactive'
-              } else if (hasFutureRecord) {
-                status = 'Active'
-              }
-            }
-
-            return {
-              ...rider,
-              deployment_date: deploymentDate,
-              last_active: lastActiveDate,
-              status
+        if (fuelResult?.data) {
+          fuelResult.data.forEach(rider => {
+            const existing = ridersMap.get(rider.rider_id)
+            if (existing) {
+              ridersMap.set(rider.rider_id, {
+                ...existing,
+                ...rider,
+                source: 'both'
+              })
+            } else {
+              ridersMap.set(rider.rider_id, { ...rider, source: 'fuel_management' })
             }
           })
-          
-          // Show all riders (including those with N/A deployment date)
-          setData(allRiders)
-          setFilteredData(allRiders)
+        }
+
+        performanceData.forEach(record => {
+          if (!ridersMap.has(record.rider_id)) {
+            ridersMap.set(record.rider_id, {
+              rider_id: record.rider_id,
+              rider_name: record.driver_name,
+              operator_hub: record.hub,
+              region: record.region,
+              status: 'Active',
+              source: 'performance'
+            })
+          }
         })
+
+        const referenceDate = performanceData
+          .map(p => p.date)
+          .filter(Boolean)
+          .map(dateStr => new Date(dateStr).getTime())
+          .reduce((max, current) => Math.max(max, current), 0)
+
+        const referenceDay = referenceDate ? new Date(referenceDate) : new Date()
+
+        const parseDate = (value) => {
+          if (!value) return null
+          const date = new Date(value)
+          return Number.isNaN(date.getTime()) ? null : date
+        }
+
+        const hasRecordWithinWindow = (records, start, end) => {
+          return records.some(record => {
+            const recordDate = parseDate(record.date)
+            return recordDate && recordDate >= start && recordDate <= end
+          })
+        }
+
+        const allRiders = Array.from(ridersMap.values()).map(rider => {
+          const riderRecords = performanceData.filter(p => p.rider_id === rider.rider_id)
+
+          let deploymentDate = rider.deployment_date || 'N/A'
+          let lastActiveDate = rider.last_active || 'N/A'
+
+          if (riderRecords.length > 0) {
+            const sortedDates = riderRecords
+              .map(p => p.date)
+              .filter(Boolean)
+              .sort((a, b) => new Date(a) - new Date(b))
+
+            if (sortedDates.length > 0) {
+              deploymentDate = sortedDates[0]?.split('T')[0] || sortedDates[0]
+              lastActiveDate = sortedDates[sortedDates.length - 1]?.split('T')[0] || sortedDates[sortedDates.length - 1]
+            }
+          }
+
+          let status = rider.status || 'Active'
+          const lastActiveObj = parseDate(lastActiveDate)
+          if (lastActiveObj) {
+            const windowStart = new Date(lastActiveObj)
+            windowStart.setDate(windowStart.getDate() + 1)
+            const windowEnd = new Date(lastActiveObj)
+            windowEnd.setDate(windowEnd.getDate() + 30)
+
+            const hasFutureRecord = hasRecordWithinWindow(riderRecords, windowStart, windowEnd)
+            if (!hasFutureRecord && referenceDay > windowEnd) {
+              status = 'Inactive'
+            } else if (hasFutureRecord) {
+              status = 'Active'
+            }
+          }
+
+          return {
+            ...rider,
+            deployment_date: deploymentDate,
+            last_active: lastActiveDate,
+            status
+          }
+        })
+
+        setData(allRiders)
+        setFilteredData(allRiders)
       } catch (error) {
         console.error('Error fetching Rider data:', error)
       } finally {
         setLoading(false)
       }
     }
+
     fetchData()
   }, [])
 
@@ -286,8 +247,6 @@ function Rider() {
       <div className="space-y-6 relative">
         {/* Skeleton Loading Screen */}
         <SkeletonRider />
-        {/* Progress Loader - Centered overlay */}
-        <ProgressBarLoader progress={loadingProgress} loadingStage={loadingStage} />
       </div>
     )
   }
