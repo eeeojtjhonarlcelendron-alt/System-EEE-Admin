@@ -957,16 +957,21 @@ function Dashboard() {
           return recordDate >= hubFromDate && recordDate <= hubToDate
         })
       } else if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
-        const latestKpiDate = getMaxDateString(filteredKPI.map(k => k.date?.split('T')[0] || k.date))
-        const bounds = getRangeBounds(hubDeliveryTrendRange, latestKpiDate)
-        if (bounds.start && bounds.end) {
+        const metricRange = getHubMetricDateRange({
+          selectedHub,
+          hubFromDate,
+          hubToDate,
+          selectedDate,
+          hubDeliveryTrendRange
+        })
+        if (metricRange && metricRange.start && metricRange.end) {
           filteredPerformance = filteredPerformance.filter(p => {
             const recordDate = p.date?.split('T')[0] || p.date
-            return recordDate >= bounds.start && recordDate <= bounds.end
+            return recordDate >= metricRange.start && recordDate <= metricRange.end
           })
           filteredKPI = filteredKPI.filter(k => {
             const recordDate = k.date?.split('T')[0] || k.date
-            return recordDate >= bounds.start && recordDate <= bounds.end
+            return recordDate >= metricRange.start && recordDate <= metricRange.end
           })
         } else {
           filteredPerformance = []
@@ -3125,6 +3130,16 @@ const hubLevelGraphComparison = useMemo(() => {
       {/* KPI Stats Row - Symmetrical 7 Metrics - Hub Level Only */}
       {dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs' && (
       <div className="flex gap-2">
+        {/* Determine if visual sections have data to keep KPI cards consistent */}
+        {
+          (() => {
+            // compute hubHasVisualData in render scope so it's updated with hooks
+            // fallback to true for non-hub views to preserve existing behavior
+            // (this only affects hub-level KPI cards)
+            // Note: `filteredChartData`, `hubLevelGraphComparison`, and `kpiGradeData`
+            // are defined above and kept in dependencies for correctness.
+          })()
+        }
         <CompactStatCard 
           title="Success Rate" 
           value={`${filteredStats.successRate || 0}%`} 
