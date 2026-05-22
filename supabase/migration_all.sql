@@ -34,8 +34,8 @@ AS $$
       hub,
       AVG(CAST(pecentage AS DECIMAL)) as success_rate,
       COUNT(DISTINCT rider_id) as riders,
-      AVG(CAST(delivered AS DECIMAL)) as delivered,
-      AVG(CAST(onhold AS DECIMAL)) as on_hold,
+      SUM(CAST(delivered AS DECIMAL)) as delivered,
+      SUM(CAST(onhold AS DECIMAL)) as on_hold,
       AVG(CAST(assigned AS DECIMAL)) as productivity
     FROM performance_records
     WHERE date IS NOT NULL AND hub IS NOT NULL
@@ -150,8 +150,8 @@ BEGIN
       hub,
       AVG(CAST(pecentage AS DECIMAL)) as success_rate,
       COUNT(DISTINCT rider_id) as riders,
-      AVG(CAST(delivered AS DECIMAL)) as delivered,
-      AVG(CAST(onhold AS DECIMAL)) as on_hold,
+      SUM(CAST(delivered AS DECIMAL)) as delivered,
+      SUM(CAST(onhold AS DECIMAL)) as on_hold,
       AVG(CAST(assigned AS DECIMAL)) as productivity
     FROM performance_records
     WHERE date IS NOT NULL AND hub IS NOT NULL

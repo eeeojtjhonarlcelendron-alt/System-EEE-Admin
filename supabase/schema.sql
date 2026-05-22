@@ -260,11 +260,11 @@ BEGIN
     -- Riders: count unique rider_ids from Performance
     (SELECT COUNT(DISTINCT p2.rider_id) FROM performance_records p2 
      WHERE p2.date = COALESCE(p.date, k.date) AND p2.hub = COALESCE(p.hub, k.operator_hub)) as riders,
-    -- Delivered: average from Performance
-    (SELECT AVG(p2.delivered) FROM performance_records p2 
+    -- Delivered: total from Performance
+    (SELECT SUM(p2.delivered) FROM performance_records p2 
      WHERE p2.date = COALESCE(p.date, k.date) AND p2.hub = COALESCE(p.hub, k.operator_hub)) as delivered,
-    -- On-Hold: average from Performance
-    (SELECT AVG(p2.onhold) FROM performance_records p2 
+    -- On-Hold: total from Performance
+    (SELECT SUM(p2.onhold) FROM performance_records p2 
      WHERE p2.date = COALESCE(p.date, k.date) AND p2.hub = COALESCE(p.hub, k.operator_hub)) as on_hold,
     -- Productivity: average of assigned from Performance
     (SELECT AVG(p2.assigned) FROM performance_records p2 

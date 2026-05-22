@@ -66,8 +66,8 @@ BEGIN
     dh.hub,
     COALESCE(AVG(p.pecentage), 0) as success_rate,
     COALESCE(COUNT(DISTINCT p.rider_id), 0) as riders,
-    COALESCE(AVG(p.delivered), 0) as delivered,
-    COALESCE(AVG(p.onhold), 0) as on_hold,
+    COALESCE(SUM(p.delivered), 0) as delivered,
+    COALESCE(SUM(p.onhold), 0) as on_hold,
     COALESCE(AVG(p.assigned), 0) as productivity,
     COALESCE(AVG(k.cfr), 0) as clear_floor_rate,
     COALESCE(AVG(k.score), 0) as scorecard
