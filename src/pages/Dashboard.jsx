@@ -225,7 +225,6 @@ function Dashboard() {
   const [dashboardView, setDashboardView] = useState('hub') // 'hub', 'rider', or 'overall'
   const [selectedDate, setSelectedDate] = useState('') // empty by default
   const [clusterLeaders, setClusterLeaders] = useState([])
-  const [riderTrendView, setRiderTrendView] = useState('L7D') // 'L7D', 'P7D', 'MTD', or 'ALL' for Rider Delivery Trend
   const [riderTrendRange, setRiderTrendRange] = useState('L7D') // 'L7D', 'P7D', 'MTD', or 'ALL' for Rider Level filter
   const [overallTrendView, setOverallTrendView] = useState('L7D') // 'P7D' or 'L7D' for Overall Delivery Trend
   const [riderTrendMetric, setRiderTrendMetric] = useState('delivered') // 'delivered', 'onHold', 'successRate', 'productivity'
@@ -330,12 +329,8 @@ function Dashboard() {
       const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
       const hubMetrics = dashboardMetrics.filter(item => String(item.hub || '').trim().toLowerCase() === selectedHubNorm)
       const latestMetricDate = getMaxDateString(hubMetrics.map(item => item.date?.split('T')[0] || item.date))
-      // If dashboard_metrics has no entries for this hub, fall back to KPI records (kpiData)
       if (!latestMetricDate) {
-        const hubKpi = (kpiData || []).filter(k => String(k.operator_hub || k.hub || '').trim().toLowerCase() === selectedHubNorm)
-        const latestKpiDate = getMaxDateString(hubKpi.map(item => item.date?.split('T')[0] || item.date))
-        if (!latestKpiDate) return null
-        return getRangeBounds(hubDeliveryTrendRange, latestKpiDate)
+        return null
       }
       return getRangeBounds(hubDeliveryTrendRange, latestMetricDate)
     }
@@ -1430,9 +1425,9 @@ const filteredChartData = useMemo(() => {
         return itemDate === selectedDateNorm
       })
     }
+
     const aggregated = {}
 
-    // If dashboard_metrics produced results, aggregate them as before
     filtered.forEach(item => {
       const date = item.date?.split('T')[0] || item.date
       if (!date) return
@@ -1462,76 +1457,6 @@ const filteredChartData = useMemo(() => {
       entry.count += 1
     })
 
-    // If no dashboard_metrics rows were found for this hub/date filter, try building from raw performance & KPI records
-    if (Object.keys(aggregated).length === 0) {
-      const normalizeHub = (v) => String(v || '').trim().toLowerCase()
-      // Filter performance records and KPI records by hub and date range selection
-      let perf = (performanceRecords || []).filter(p => normalizeHub(p.hub) === selectedHubNorm)
-      let kpi = (kpiData || []).filter(k => normalizeHub(k.operator_hub || k.hub) === selectedHubNorm)
-
-      // Apply date range filters similarly to dashboard_metrics
-      if (hubFromDate && hubToDate) {
-        perf = perf.filter(p => {
-          const d = String(p.date || '').split('T')[0]
-          return d >= hubFromDate && d <= hubToDate
-        })
-        kpi = kpi.filter(k => {
-          const d = String(k.date || '').split('T')[0]
-          return d >= hubFromDate && d <= hubToDate
-        })
-      } else if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
-        const allDates = [...new Set([...perf.map(p => String(p.date || '').split('T')[0]), ...kpi.map(k => String(k.date || '').split('T')[0])].filter(Boolean))]
-        const latestDateString = allDates.sort().pop() || ''
-        if (latestDateString) {
-          const bounds = getRangeBounds(hubDeliveryTrendRange, latestDateString)
-          if (bounds && bounds.start && bounds.end) {
-            perf = perf.filter(p => {
-              const d = String(p.date || '').split('T')[0]
-              return d >= bounds.start && d <= bounds.end
-            })
-            kpi = kpi.filter(k => {
-              const d = String(k.date || '').split('T')[0]
-              return d >= bounds.start && d <= bounds.end
-            })
-          } else {
-            perf = []
-            kpi = []
-          }
-        } else {
-          perf = []
-          kpi = []
-        }
-      } else if (selectedDate) {
-        perf = perf.filter(p => String(p.date || '').split('T')[0] === selectedDateNorm)
-        kpi = kpi.filter(k => String(k.date || '').split('T')[0] === selectedDateNorm)
-      }
-
-      // Build aggregated map from perf and kpi
-      perf.forEach(p => {
-        const date = String(p.date || '').split('T')[0]
-        if (!date) return
-        if (!aggregated[date]) aggregated[date] = { date, count: 0, delivered: 0, riders: 0, on_hold: 0, success_rate: 0, productivity: 0, clear_floor_rate: 0, scorecard: 0 }
-        const e = aggregated[date]
-        e.delivered += Number(p.delivered) || 0
-        e.riders += 1 // count unique riders per record; we'll dedupe later if needed
-        e.on_hold += Number(p.onhold || p.on_hold) || 0
-        e.success_rate += Number(p.pecentage || p.percentage || 0) || 0
-        e.productivity += Number(p.assigned) || 0
-        e.count += 1
-      })
-
-      kpi.forEach(k => {
-        const date = String(k.date || '').split('T')[0]
-        if (!date) return
-        if (!aggregated[date]) aggregated[date] = { date, count: 0, delivered: 0, riders: 0, on_hold: 0, success_rate: 0, productivity: 0, clear_floor_rate: 0, scorecard: 0 }
-        const e = aggregated[date]
-        e.clear_floor_rate += Number(k.cfr || k.clear_floor_rate || 0) || 0
-        // KPI may provide sr or score; prefer sr for success rate and score for scorecard
-        e.scorecard += Number(k.sr || k.score || 0) || 0
-        e.count += 1
-      })
-    }
-
     const chartData = Object.values(aggregated)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(item => ({
@@ -1544,12 +1469,12 @@ const filteredChartData = useMemo(() => {
         'Clear Floor Rate': item.count > 0 ? Number((item.clear_floor_rate / item.count).toFixed(1)) : 0,
         'Scorecard': item.count > 0 ? Number((item.scorecard / item.count).toFixed(1)) : 0
       }))
-
+    
     console.log('Final chart data:', chartData?.length || 0, 'rows')
     if (chartData?.length > 0) {
       console.log('Sample chart row:', chartData[0])
     }
-
+    
     return chartData
   }
 
@@ -1754,64 +1679,7 @@ const chartDomain = useMemo(() => {
 // Calculate hub level period comparison data for Graph Comparison
 const hubLevelGraphComparison = useMemo(() => {
   if (dashboardView !== 'hub' || !selectedHub || selectedHub === 'All Hubs' || !dashboardMetrics || dashboardMetrics.length === 0) {
-    // If dashboard_metrics is empty, try building hub-level data from performanceRecords and kpiData
-    if (!performanceRecords?.length && !kpiData?.length) return []
-    // Build hubData from performanceRecords and kpiData
-    const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
-    const normalize = (v) => String(v || '').trim().toLowerCase()
-    const perf = (performanceRecords || []).filter(p => normalize(p.hub) === selectedHubNorm)
-    const kpi = (kpiData || []).filter(k => normalize(k.operator_hub || k.hub) === selectedHubNorm)
-
-    const datesSet = new Set([...(perf.map(p => String(p.date || '').split('T')[0]).filter(Boolean)), ...(kpi.map(k => String(k.date || '').split('T')[0]).filter(Boolean))])
-    const hubDataFromRaw = Array.from(datesSet).map(date => {
-      // Aggregate perf for the date
-      const perfForDate = perf.filter(p => String(p.date || '').split('T')[0] === date)
-      const kpiForDate = kpi.filter(k => String(k.date || '').split('T')[0] === date)
-
-      const totals = { success_rate: 0, riders: 0, delivered: 0, on_hold: 0, productivity: 0, clear_floor_rate: 0, scorecard: 0, count: 0 }
-      if (perfForDate.length) {
-        const riders = new Set()
-        let assignedTotal = 0
-        perfForDate.forEach(r => {
-          totals.delivered += Number(r.delivered) || 0
-          totals.on_hold += Number(r.onhold || r.on_hold) || 0
-          assignedTotal += Number(r.assigned) || 0
-          riders.add(r.rider_id)
-          if (Number(r.assigned) > 0) totals.success_rate += ((Number(r.delivered) || 0) / (Number(r.assigned) || 1))
-        })
-        totals.riders = riders.size
-        totals.productivity = riders.size > 0 ? Math.round(assignedTotal / riders.size) : 0
-        totals.count += 1
-      }
-      if (kpiForDate.length) {
-        kpiForDate.forEach(k => {
-          totals.clear_floor_rate += Number(k.cfr || 0) || 0
-          totals.scorecard += Number(k.sr || k.score || 0) || 0
-          totals.count++
-        })
-      }
-
-      // Normalize averages
-      if (totals.count > 0) {
-        totals.success_rate = Math.round((totals.success_rate / Math.max(1, perfForDate.length)) * 100)
-        totals.clear_floor_rate = Math.round(totals.clear_floor_rate / Math.max(1, kpiForDate.length))
-        totals.scorecard = kpiForDate.length > 0 ? (totals.scorecard / kpiForDate.length).toFixed(1) : 0
-      }
-
-      return {
-        date,
-        success_rate: totals.success_rate,
-        riders: totals.riders,
-        delivered: totals.delivered,
-        on_hold: totals.on_hold,
-        productivity: totals.productivity,
-        clear_floor_rate: totals.clear_floor_rate,
-        scorecard: totals.scorecard,
-      }
-    }).sort((a,b) => a.date.localeCompare(b.date))
-
-    if (hubDataFromRaw.length === 0) return []
-    hubData = hubDataFromRaw
+    return []
   }
 
   const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
@@ -3880,64 +3748,6 @@ const hubLevelGraphComparison = useMemo(() => {
                 </button>
               </div>
             </div>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => {
-                    setRiderTrendView('L7D')
-                    setRiderFromDate('')
-                    setRiderToDate('')
-                  }}
-                  className={`px-3 py-1 rounded text-[10px] font-medium transition-all ${
-                    riderTrendView === 'L7D'
-                      ? 'bg-maroon-500 text-white'
-                      : 'bg-slate-700 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Last 7 days
-                </button>
-                <button
-                  onClick={() => {
-                    setRiderTrendView('P7D')
-                    setRiderFromDate('')
-                    setRiderToDate('')
-                  }}
-                  className={`px-3 py-1 rounded text-[10px] font-medium transition-all ${
-                    riderTrendView === 'P7D'
-                      ? 'bg-maroon-500 text-white'
-                      : 'bg-slate-700 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Prior 7 days
-                </button>
-                <button
-                  onClick={() => {
-                    setRiderTrendView('MTD')
-                    setRiderFromDate('')
-                    setRiderToDate('')
-                  }}
-                  className={`px-3 py-1 rounded text-[10px] font-medium transition-all ${
-                    riderTrendView === 'MTD'
-                      ? 'bg-maroon-500 text-white'
-                      : 'bg-slate-700 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Month to date
-                </button>
-                <button
-                  onClick={() => {
-                    setRiderTrendView('ALL')
-                    setRiderFromDate('')
-                    setRiderToDate('')
-                  }}
-                  className={`px-3 py-1 rounded text-[10px] font-medium transition-all ${
-                    riderTrendView === 'ALL'
-                      ? 'bg-maroon-500 text-white'
-                      : 'bg-slate-700 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  All Data
-                </button>
-              </div>
             <div className="flex items-center gap-2">
               {/* Metric Filter */}
               <div className="flex gap-1">
