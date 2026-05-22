@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import { 
   getDashboardMetrics,
@@ -74,6 +73,325 @@ import {
   PolarRadiusAxis,
   LabelList
 } from 'recharts'
+
+const PDF_THEME = {
+  maroon: [168, 48, 48],
+  maroonLight: [235, 98, 98],
+  ink: [51, 65, 85],
+  muted: [100, 116, 139],
+  line: [203, 213, 225],
+  grid: [226, 232, 240],
+  panel: [248, 250, 252],
+  white: [255, 255, 255],
+  blue: [59, 130, 246],
+  amber: [245, 158, 11],
+  purple: [168, 85, 247],
+  green: [16, 185, 129]
+}
+
+const HUB_EXPORT_METRICS = [
+  { key: 'Success Rate', label: 'Success Rate', suffix: '%' },
+  { key: 'Riders', label: 'Riders' },
+  { key: 'Delivered', label: 'Delivered' },
+  { key: 'On-Hold', label: 'On-Hold' },
+  { key: 'Productivity', label: 'Productivity' },
+  { key: 'Clear Floor Rate', label: 'Clear Floor Rate', suffix: '%' },
+  { key: 'Scorecard', label: 'Scorecard' }
+]
+
+const RIDER_EXPORT_METRICS = [
+  { key: 'delivered', label: 'Delivered', color: PDF_THEME.green },
+  { key: 'onHold', label: 'On-Hold', color: PDF_THEME.amber },
+  { key: 'successRate', label: 'Success Rate', suffix: '%', color: PDF_THEME.blue },
+  { key: 'productivity', label: 'Productivity', color: PDF_THEME.purple }
+]
+
+const OVERALL_EXPORT_CHARTS = [
+  { title: 'AVG KPI', p7dKey: 'kpiP7D', l7dKey: 'kpiL7D', suffix: '%', max: 100 },
+  { title: 'Clear Floor Rate', p7dKey: 'cfrP7D', l7dKey: 'cfrL7D', suffix: '%', max: 100 },
+  { title: 'Success Rate', p7dKey: 'srP7D', l7dKey: 'srL7D', suffix: '%', max: 100 },
+  { title: 'Productivity', p7dKey: 'prodP7D', l7dKey: 'prodL7D' },
+  { title: 'Loss', p7dKey: 'lossP7D', l7dKey: 'lossL7D' },
+  { title: 'Rider Count', p7dKey: 'ridersP7D', l7dKey: 'ridersL7D' }
+]
+
+const formatPdfNumber = (value, suffix = '') => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return suffix ? `0${suffix}` : '0'
+  const rounded = Number.isInteger(numeric) ? numeric : Number(numeric.toFixed(1))
+  return `${rounded}${suffix}`
+}
+
+const formatPdfDateLabel = (value) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString('en-US', { weekday: 'short' })
+}
+
+const drawNoData = (pdf, x, y, width, height, title, message = 'No graph data available') => {
+  pdf.setFillColor(...PDF_THEME.panel)
+  pdf.roundedRect(x, y, width, height, 2, 2, 'F')
+  pdf.setDrawColor(...PDF_THEME.line)
+  pdf.roundedRect(x, y, width, height, 2, 2, 'S')
+  pdf.setTextColor(...PDF_THEME.ink)
+  pdf.setFontSize(10)
+  pdf.setFont(undefined, 'bold')
+  pdf.text(title, x + 5, y + 8)
+  pdf.setTextColor(...PDF_THEME.muted)
+  pdf.setFontSize(8)
+  pdf.setFont(undefined, 'normal')
+  pdf.text(message, x + width / 2, y + height / 2, { align: 'center' })
+}
+
+const drawChartTitle = (pdf, x, y, width, title, subtitle = '') => {
+  pdf.setTextColor(...PDF_THEME.ink)
+  pdf.setFontSize(10)
+  pdf.setFont(undefined, 'bold')
+  pdf.text(title, x + 5, y + 8)
+  if (subtitle) {
+    pdf.setTextColor(...PDF_THEME.muted)
+    pdf.setFontSize(7)
+    pdf.setFont(undefined, 'normal')
+    pdf.text(String(subtitle), x + width - 5, y + 8, { align: 'right' })
+  }
+}
+
+const drawChartShell = (pdf, x, y, width, height, title, subtitle = '') => {
+  pdf.setFillColor(...PDF_THEME.white)
+  pdf.roundedRect(x, y, width, height, 2, 2, 'F')
+  pdf.setDrawColor(...PDF_THEME.line)
+  pdf.roundedRect(x, y, width, height, 2, 2, 'S')
+  drawChartTitle(pdf, x, y, width, title, subtitle)
+}
+
+const drawYAxisGrid = (pdf, plot, maxValue, suffix = '') => {
+  const gridLines = 4
+  pdf.setDrawColor(...PDF_THEME.grid)
+  pdf.setTextColor(...PDF_THEME.muted)
+  pdf.setFontSize(6)
+  pdf.setFont(undefined, 'normal')
+
+  for (let i = 0; i <= gridLines; i += 1) {
+    const ratio = i / gridLines
+    const y = plot.bottom - (plot.height * ratio)
+    const value = maxValue * ratio
+    pdf.line(plot.left, y, plot.right, y)
+    pdf.text(formatPdfNumber(value, suffix), plot.left - 2, y + 1.5, { align: 'right' })
+  }
+}
+
+const getChartMax = (data, keys, explicitMax) => {
+  if (explicitMax) return explicitMax
+  const values = data.flatMap(item => keys.map(key => Number(item[key]) || 0))
+  const maxValue = Math.max(...values, 0)
+  if (maxValue <= 0) return 10
+  return Math.ceil(maxValue * 1.2)
+}
+
+const drawSingleBarChart = (pdf, { x, y, width, height, title, subtitle, data, xKey, yKey, suffix = '', color = PDF_THEME.maroon, max }) => {
+  if (!data || data.length === 0) {
+    drawNoData(pdf, x, y, width, height, title)
+    return
+  }
+
+  drawChartShell(pdf, x, y, width, height, title, subtitle)
+  const plot = {
+    left: x + 18,
+    right: x + width - 7,
+    top: y + 18,
+    bottom: y + height - 14
+  }
+  plot.width = plot.right - plot.left
+  plot.height = plot.bottom - plot.top
+
+  const maxValue = getChartMax(data, [yKey], max)
+  drawYAxisGrid(pdf, plot, maxValue, suffix)
+
+  const gap = Math.max(1.5, plot.width / Math.max(data.length, 1) * 0.25)
+  const barWidth = Math.max(2, (plot.width - gap * (data.length + 1)) / data.length)
+
+  data.forEach((item, index) => {
+    const value = Number(item[yKey]) || 0
+    const barHeight = maxValue > 0 ? (value / maxValue) * plot.height : 0
+    const barX = plot.left + gap + index * (barWidth + gap)
+    const barY = plot.bottom - barHeight
+
+    pdf.setFillColor(...color)
+    pdf.rect(barX, barY, barWidth, barHeight, 'F')
+    pdf.setTextColor(...PDF_THEME.ink)
+    pdf.setFontSize(6)
+    pdf.text(formatPdfNumber(value, suffix), barX + barWidth / 2, Math.max(plot.top + 4, barY - 2), { align: 'center' })
+
+    if (index % Math.ceil(data.length / 8 || 1) === 0 || data.length <= 8) {
+      pdf.setTextColor(...PDF_THEME.muted)
+      pdf.setFontSize(5)
+      pdf.text(formatPdfDateLabel(item[xKey]), barX + barWidth / 2, plot.bottom + 5, { align: 'center', angle: data.length > 8 ? 35 : 0 })
+    }
+  })
+}
+
+const drawLineChart = (pdf, { x, y, width, height, title, subtitle, data, xKey, yKey, suffix = '', color = PDF_THEME.maroon, max }) => {
+  if (!data || data.length === 0) {
+    drawNoData(pdf, x, y, width, height, title)
+    return
+  }
+
+  drawChartShell(pdf, x, y, width, height, title, subtitle)
+  const plot = {
+    left: x + 18,
+    right: x + width - 7,
+    top: y + 18,
+    bottom: y + height - 14
+  }
+  plot.width = plot.right - plot.left
+  plot.height = plot.bottom - plot.top
+
+  const maxValue = getChartMax(data, [yKey], max)
+  drawYAxisGrid(pdf, plot, maxValue, suffix)
+
+  const pointCount = data.length
+  const step = pointCount > 1 ? plot.width / (pointCount - 1) : 0
+  const points = data.map((item, index) => {
+    const value = Number(item[yKey]) || 0
+    return {
+      x: pointCount > 1 ? plot.left + (index * step) : plot.left + plot.width / 2,
+      y: plot.bottom - ((value / maxValue) * plot.height),
+      value,
+      label: item[xKey]
+    }
+  })
+
+  pdf.setDrawColor(...color)
+  pdf.setLineWidth(0.6)
+  for (let i = 1; i < points.length; i += 1) {
+    pdf.line(points[i - 1].x, points[i - 1].y, points[i].x, points[i].y)
+  }
+
+  points.forEach((point, index) => {
+    pdf.setFillColor(...color)
+    pdf.circle(point.x, point.y, 1.2, 'F')
+    pdf.setTextColor(...PDF_THEME.ink)
+    pdf.setFontSize(6)
+    pdf.text(formatPdfNumber(point.value, suffix), point.x, Math.max(plot.top + 4, point.y - 3), { align: 'center' })
+
+    if (index % Math.ceil(points.length / 8 || 1) === 0 || points.length <= 8) {
+      pdf.setTextColor(...PDF_THEME.muted)
+      pdf.setFontSize(5)
+      pdf.text(formatPdfDateLabel(point.label), point.x, plot.bottom + 5, { align: 'center', angle: points.length > 8 ? 35 : 0 })
+    }
+  })
+}
+
+const drawGroupedBarChart = (pdf, { x, y, width, height, title, data, xKey, firstKey, secondKey, firstLabel = 'P7D', secondLabel = 'L7D', suffix = '', max }) => {
+  if (!data || data.length === 0) {
+    drawNoData(pdf, x, y, width, height, title)
+    return
+  }
+
+  drawChartShell(pdf, x, y, width, height, title)
+  const legendY = y + 8
+  pdf.setFillColor(...PDF_THEME.maroon)
+  pdf.rect(x + width - 34, legendY - 3, 3, 3, 'F')
+  pdf.setFillColor(...PDF_THEME.maroonLight)
+  pdf.rect(x + width - 18, legendY - 3, 3, 3, 'F')
+  pdf.setTextColor(...PDF_THEME.muted)
+  pdf.setFontSize(6)
+  pdf.text(firstLabel, x + width - 30, legendY)
+  pdf.text(secondLabel, x + width - 14, legendY)
+
+  const plot = {
+    left: x + 18,
+    right: x + width - 7,
+    top: y + 18,
+    bottom: y + height - 16
+  }
+  plot.width = plot.right - plot.left
+  plot.height = plot.bottom - plot.top
+
+  const maxValue = getChartMax(data, [firstKey, secondKey], max)
+  drawYAxisGrid(pdf, plot, maxValue, suffix)
+
+  const groupGap = Math.max(2, plot.width / Math.max(data.length, 1) * 0.25)
+  const groupWidth = Math.max(5, (plot.width - groupGap * (data.length + 1)) / data.length)
+  const barWidth = groupWidth / 2.4
+
+  data.forEach((item, index) => {
+    const groupX = plot.left + groupGap + index * (groupWidth + groupGap)
+    const values = [
+      { key: firstKey, color: PDF_THEME.maroon, offset: 0 },
+      { key: secondKey, color: PDF_THEME.maroonLight, offset: barWidth + 0.7 }
+    ]
+
+    values.forEach(series => {
+      const value = Number(item[series.key]) || 0
+      const barHeight = maxValue > 0 ? (value / maxValue) * plot.height : 0
+      const barX = groupX + series.offset
+      const barY = plot.bottom - barHeight
+      pdf.setFillColor(...series.color)
+      pdf.rect(barX, barY, barWidth, barHeight, 'F')
+      pdf.setTextColor(...PDF_THEME.ink)
+      pdf.setFontSize(5)
+      pdf.text(formatPdfNumber(value, suffix), barX + barWidth / 2, Math.max(plot.top + 3, barY - 1.5), { align: 'center' })
+    })
+
+    pdf.setTextColor(...PDF_THEME.muted)
+    pdf.setFontSize(5)
+    pdf.text(String(item[xKey] || ''), groupX + groupWidth / 2, plot.bottom + 5, { align: 'center', angle: data.length > 5 ? 25 : 0 })
+  })
+}
+
+const drawRadarChartPdf = (pdf, { x, y, width, height, title, data }) => {
+  if (!data || data.length === 0) {
+    drawNoData(pdf, x, y, width, height, title)
+    return
+  }
+
+  drawChartShell(pdf, x, y, width, height, title)
+  const centerX = x + width / 2
+  const centerY = y + height / 2 + 6
+  const radius = Math.min(width, height) * 0.27
+  const levels = 4
+
+  pdf.setDrawColor(...PDF_THEME.grid)
+  for (let level = 1; level <= levels; level += 1) {
+    const r = (radius * level) / levels
+    const ring = data.map((_, index) => {
+      const angle = (-Math.PI / 2) + (index * 2 * Math.PI) / data.length
+      return [centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r]
+    })
+    for (let i = 0; i < ring.length; i += 1) {
+      const next = ring[(i + 1) % ring.length]
+      pdf.line(ring[i][0], ring[i][1], next[0], next[1])
+    }
+  }
+
+  const points = data.map((item, index) => {
+    const angle = (-Math.PI / 2) + (index * 2 * Math.PI) / data.length
+    const outerX = centerX + Math.cos(angle) * radius
+    const outerY = centerY + Math.sin(angle) * radius
+    const valueRadius = radius * Math.max(0, Math.min(100, Number(item.value) || 0)) / 100
+    const pointX = centerX + Math.cos(angle) * valueRadius
+    const pointY = centerY + Math.sin(angle) * valueRadius
+
+    pdf.line(centerX, centerY, outerX, outerY)
+    pdf.setTextColor(...PDF_THEME.muted)
+    pdf.setFontSize(6)
+    pdf.text(`${item.name} ${formatPdfNumber(item.value, '%')}`, outerX, outerY, { align: outerX < centerX ? 'right' : 'left' })
+    return [pointX, pointY]
+  })
+
+  pdf.setDrawColor(...PDF_THEME.maroon)
+  pdf.setLineWidth(0.7)
+  for (let i = 0; i < points.length; i += 1) {
+    const next = points[(i + 1) % points.length]
+    pdf.line(points[i][0], points[i][1], next[0], next[1])
+  }
+  points.forEach(point => {
+    pdf.setFillColor(...PDF_THEME.maroon)
+    pdf.circle(point[0], point[1], 1.2, 'F')
+  })
+}
 
 // Circular Progress Component
 function CircularProgress({ value, label, sublabel, color = '#a83030', size = 120 }) {
@@ -2232,6 +2550,12 @@ const hubLevelGraphComparison = useMemo(() => {
       
       let reportTitle = ''
       let filterInfo = []
+      const rangeLabels = {
+        ALL: 'All Data',
+        L7D: 'Last 7 Days',
+        P7D: 'Prior 7 Days',
+        MTD: 'Month to Date'
+      }
       
       // Calculate date range for display
       let dateRangeStr = 'All Dates'
@@ -2263,7 +2587,12 @@ const hubLevelGraphComparison = useMemo(() => {
       
       if (dashboardView === 'hub') {
         reportTitle = 'Hub Level Dashboard'
-        filterInfo = [`Hub: ${selectedHub || 'All Hubs'}`, `Date Range: ${dateRangeStr}`]
+        filterInfo = [
+          `Hub: ${selectedHub || 'All Hubs'}`,
+          `From: ${hubFromDate || ''}    To: ${hubToDate || ''}`,
+          `Compare Date A: ${hubCompareDateA || ''}    Compare Date B: ${hubCompareDateB || ''}`,
+          `Range: ${rangeLabels[hubDeliveryTrendRange] || hubDeliveryTrendRange || ''}`
+        ]
       } else if (dashboardView === 'rider') {
         reportTitle = 'Rider Level Dashboard'
         filterInfo = [
@@ -2279,12 +2608,17 @@ const hubLevelGraphComparison = useMemo(() => {
       currentY += 8
 
       // Filters box
+      const filterText = dashboardView === 'hub'
+        ? `Filters: ${filterInfo.join('\n')}`
+        : `Filters: ${filterInfo.join(' | ')}`
+      const filterLines = pdf.splitTextToSize(filterText, pdfWidth - (margin * 2) - 6)
+      const filterBoxHeight = Math.max(12, filterLines.length * 5 + 6)
       pdf.setFillColor(241, 245, 249)
-      pdf.rect(margin, currentY - 3, pdfWidth - (margin * 2), 12, 'F')
+      pdf.rect(margin, currentY - 3, pdfWidth - (margin * 2), filterBoxHeight, 'F')
       pdf.setFontSize(9)
       pdf.setTextColor(100, 116, 139)
-      pdf.text(`Filters: ${filterInfo.join(' | ')}`, margin + 3, currentY + 4)
-      currentY += 18
+      pdf.text(filterLines, margin + 3, currentY + 4)
+      currentY += filterBoxHeight + 6
 
       // === SUMMARY STATS SECTION ===
       const comparisonData = dashboardView === 'overall' ? getComparisonData() : []
@@ -2300,9 +2634,12 @@ const hubLevelGraphComparison = useMemo(() => {
       if (dashboardView === 'hub' && filteredStats) {
         summaryStats = [
           { label: 'Success Rate', value: `${filteredStats.successRate || 0}%` },
-          { label: 'Active Riders', value: String(filteredStats.activeRiders || 0) },
+          { label: 'Riders', value: String(filteredStats.activeRiders || 0) },
           { label: 'Delivered', value: String(filteredStats.delivered || 0) },
-          { label: 'On-Hold', value: String(filteredStats.onHold || 0) }
+          { label: 'On-Hold', value: String(filteredStats.onHold || 0) },
+          { label: 'Productivity', value: String(filteredStats.productivity || 0) },
+          { label: 'Clear Floor', value: `${filteredStats.clearFloorRate || 0}%` },
+          { label: 'Scorecard', value: String(filteredStats.scorecard || '0.0') }
         ]
       } else if (dashboardView === 'rider' && selectedRider && riderLevelData.length > 0) {
         const rider = riderLevelData[0]
@@ -2355,6 +2692,211 @@ const hubLevelGraphComparison = useMemo(() => {
 
       currentY += boxHeight + 15
 
+      // === GRAPH TEMPLATE SECTION ===
+      const addPageIfNeeded = (requiredHeight = 45) => {
+        if (currentY + requiredHeight > pageHeight - margin) {
+          pdf.addPage()
+          currentY = margin
+        }
+      }
+
+      const drawGraphSectionHeading = (title) => {
+        addPageIfNeeded(16)
+        pdf.setTextColor(...PDF_THEME.ink)
+        pdf.setFontSize(12)
+        pdf.setFont(undefined, 'bold')
+        pdf.text(title, margin, currentY)
+        currentY += 8
+      }
+
+      const chartGap = 5
+      const halfChartWidth = (pdfWidth - (margin * 2) - chartGap) / 2
+      const fullChartWidth = pdfWidth - (margin * 2)
+
+      const drawTwoColumnCharts = (charts, chartHeight = 58) => {
+        for (let index = 0; index < charts.length; index += 2) {
+          addPageIfNeeded(chartHeight + 8)
+          const left = charts[index]
+          const right = charts[index + 1]
+          left(margin, currentY, halfChartWidth, chartHeight)
+          if (right) {
+            right(margin + halfChartWidth + chartGap, currentY, halfChartWidth, chartHeight)
+          }
+          currentY += chartHeight + chartGap
+        }
+      }
+
+      const buildRiderExportChartData = () => {
+        if (!selectedRider) return []
+
+        const selectedRiderId = String(selectedRider)
+        const sourceRecords = selectedRiderRecords.length > 0
+          ? selectedRiderRecords
+          : performanceRecords.filter(record => String(record.rider_id) === selectedRiderId)
+
+        const useCustomRange = riderFromDate && riderToDate
+        const latestRecordDate = getMaxDateString(sourceRecords.map(record => record.date))
+        const rangeBounds = (!useCustomRange && riderTrendRange && riderTrendRange !== 'ALL')
+          ? getRangeBounds(riderTrendRange, latestRecordDate)
+          : { start: '', end: '' }
+        const selectedDateNorm = selectedDate ? selectedDate.split('T')[0] : ''
+
+        const dateMap = new Map()
+        sourceRecords.forEach(record => {
+          const recordDate = record.date?.split('T')[0] || record.date
+          if (!recordDate) return
+          if (useCustomRange && (recordDate < riderFromDate || recordDate > riderToDate)) return
+          if (rangeBounds.start && rangeBounds.end && (recordDate < rangeBounds.start || recordDate > rangeBounds.end)) return
+          if (!useCustomRange && !rangeBounds.start && selectedDateNorm && recordDate !== selectedDateNorm) return
+
+          const current = dateMap.get(recordDate) || { date: recordDate, delivered: 0, onHold: 0, assigned: 0, recordCount: 0 }
+          current.delivered += parseInt(record.delivered) || 0
+          current.onHold += parseInt(record.onhold) || 0
+          current.assigned += parseInt(record.assigned) || 0
+          current.recordCount += 1
+          dateMap.set(recordDate, current)
+        })
+
+        return Array.from(dateMap.values())
+          .sort((a, b) => a.date.localeCompare(b.date))
+          .map(item => ({
+            ...item,
+            successRate: item.assigned > 0 ? Number(((item.delivered / item.assigned) * 100).toFixed(1)) : 0,
+            productivity: item.assigned
+          }))
+      }
+
+      const buildRiderNoRouteByHub = () => {
+        const grouped = filteredRidersNoRoute.reduce((acc, rider) => {
+          const hub = rider.hub || rider.operator_hub || 'Unknown'
+          acc[hub] = (acc[hub] || 0) + 1
+          return acc
+        }, {})
+
+        return Object.entries(grouped)
+          .map(([hub, count]) => ({ hub, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 12)
+      }
+
+      const drawHubGraphTemplate = () => {
+        drawGraphSectionHeading('Graph Template')
+
+        const trendCharts = HUB_EXPORT_METRICS.map(metric => (x, y, width, height) => {
+          drawSingleBarChart(pdf, {
+            x,
+            y,
+            width,
+            height,
+            title: metric.label,
+            subtitle: hubDeliveryTrendDateLabel,
+            data: filteredChartData,
+            xKey: 'month',
+            yKey: metric.key,
+            suffix: metric.suffix || '',
+            max: metric.suffix === '%' ? 100 : undefined
+          })
+        })
+        drawTwoColumnCharts(trendCharts, 58)
+
+        const comparisonCharts = HUB_EXPORT_METRICS.map(metric => (x, y, width, height) => {
+          drawSingleBarChart(pdf, {
+            x,
+            y,
+            width,
+            height,
+            title: `${metric.label} Comparison`,
+            data: hubLevelGraphComparison,
+            xKey: 'period',
+            yKey: metric.key,
+            suffix: metric.suffix || '',
+            max: metric.suffix === '%' ? 100 : undefined
+          })
+        })
+        drawTwoColumnCharts(comparisonCharts, 58)
+
+        addPageIfNeeded(78)
+        drawRadarChartPdf(pdf, {
+          x: margin,
+          y: currentY,
+          width: fullChartWidth,
+          height: 72,
+          title: 'KPI Distribution',
+          data: kpiGradeData
+        })
+        currentY += 78
+      }
+
+      const drawRiderGraphTemplate = () => {
+        drawGraphSectionHeading('Graph Template')
+
+        if (selectedRider) {
+          const riderExportChartData = buildRiderExportChartData()
+          const riderCharts = RIDER_EXPORT_METRICS.map(metric => (x, y, width, height) => {
+            drawSingleBarChart(pdf, {
+              x,
+              y,
+              width,
+              height,
+              title: metric.label,
+              data: riderExportChartData,
+              xKey: 'date',
+              yKey: metric.key,
+              suffix: metric.suffix || '',
+              color: metric.color,
+              max: metric.suffix === '%' ? 100 : undefined
+            })
+          })
+          drawTwoColumnCharts(riderCharts, 58)
+        } else {
+          addPageIfNeeded(70)
+          drawSingleBarChart(pdf, {
+            x: margin,
+            y: currentY,
+            width: fullChartWidth,
+            height: 64,
+            title: 'Riders No Route by Hub',
+            data: buildRiderNoRouteByHub(),
+            xKey: 'hub',
+            yKey: 'count'
+          })
+          currentY += 70
+        }
+      }
+
+      const drawOverallGraphTemplate = () => {
+        drawGraphSectionHeading('Graph Template')
+        const overallCharts = OVERALL_EXPORT_CHARTS.map(chart => (x, y, width, height) => {
+          drawGroupedBarChart(pdf, {
+            x,
+            y,
+            width,
+            height,
+            title: chart.title,
+            data: comparisonData,
+            xKey: 'hub',
+            firstKey: chart.p7dKey,
+            secondKey: chart.l7dKey,
+            suffix: chart.suffix || '',
+            max: chart.max
+          })
+        })
+
+        overallCharts.forEach(drawChart => {
+          addPageIfNeeded(72)
+          drawChart(margin, currentY, fullChartWidth, 66)
+          currentY += 72
+        })
+      }
+
+      if (dashboardView === 'hub') {
+        drawHubGraphTemplate()
+      } else if (dashboardView === 'rider') {
+        drawRiderGraphTemplate()
+      } else if (dashboardView === 'overall') {
+        drawOverallGraphTemplate()
+      }
+
       // === DATA TABLE SECTION ===
       const dataToExport = dashboardView === 'hub' 
         ? filteredChartData 
@@ -2363,6 +2905,7 @@ const hubLevelGraphComparison = useMemo(() => {
           : comparisonData
 
       if (dataToExport.length > 0) {
+        addPageIfNeeded(30)
         pdf.setTextColor(51, 65, 85)
         pdf.setFontSize(12)
         pdf.setFont(undefined, 'bold')
@@ -2482,7 +3025,7 @@ const hubLevelGraphComparison = useMemo(() => {
           startY += 10
 
           if (filteredRidersNoRoute && filteredRidersNoRoute.length > 0) {
-            const ridersColWidth = (pdfWidth - (margin * 2)) / 3
+            const ridersColWidth = (pdfWidth - (margin * 2)) / 4
             pdf.setFillColor(168, 48, 48)
             pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
             pdf.setTextColor(255, 255, 255)
@@ -2490,7 +3033,8 @@ const hubLevelGraphComparison = useMemo(() => {
             pdf.setFont(undefined, 'bold')
             pdf.text('Rider ID', margin + 3, startY)
             pdf.text('Rider Name', margin + ridersColWidth + 3, startY)
-            pdf.text('Status', margin + (ridersColWidth * 2) + 3, startY)
+            pdf.text('Deployed Date', margin + (ridersColWidth * 2) + 3, startY)
+            pdf.text('Last Active', margin + (ridersColWidth * 3) + 3, startY)
             startY += 8
 
             pdf.setTextColor(51, 65, 85)
@@ -2508,7 +3052,8 @@ const hubLevelGraphComparison = useMemo(() => {
               }
               pdf.text(String(rider.riderId || ''), margin + 3, startY)
               pdf.text(String(rider.riderName || 'N/A'), margin + ridersColWidth + 3, startY)
-              pdf.text(String(rider.status || 'N/A'), margin + (ridersColWidth * 2) + 3, startY)
+              pdf.text(String(rider.deploymentDate || 'N/A'), margin + (ridersColWidth * 2) + 3, startY)
+              pdf.text(String(rider.lastActive || 'N/A'), margin + (ridersColWidth * 3) + 3, startY)
               startY += 6
             })
 
@@ -2533,29 +3078,41 @@ const hubLevelGraphComparison = useMemo(() => {
           startY += 10
 
           if (retentionMetrics && retentionMetrics.totalRiders > 0) {
-            const retentionColWidth = (pdfWidth - (margin * 2)) / 4
+            const retentionCols = [
+              margin + 3,
+              margin + 68,
+              margin + 88,
+              margin + 110,
+              margin + 142,
+              margin + 166
+            ]
             pdf.setFillColor(168, 48, 48)
             pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
             pdf.setTextColor(255, 255, 255)
-            pdf.setFontSize(9)
+            pdf.setFontSize(8)
             pdf.setFont(undefined, 'bold')
-            pdf.text('Hub', margin + 3, startY)
-            pdf.text('Total', margin + retentionColWidth + 3, startY)
-            pdf.text('Active', margin + (retentionColWidth * 2) + 3, startY)
-            pdf.text('Attrition', margin + (retentionColWidth * 3) + 3, startY)
+            pdf.text('Hub', retentionCols[0], startY)
+            pdf.text('Total', retentionCols[1], startY)
+            pdf.text('Active', retentionCols[2], startY)
+            pdf.text('Retention %', retentionCols[3], startY)
+            pdf.text('Attrition', retentionCols[4], startY)
+            pdf.text('Attrition %', retentionCols[5], startY)
             startY += 8
 
             pdf.setTextColor(51, 65, 85)
             pdf.setFont(undefined, 'normal')
-            pdf.setFontSize(8)
+            pdf.setFontSize(7)
 
             // Display single retention metrics row
             pdf.setFillColor(248, 250, 252)
-            pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
-            pdf.text(String(selectedHub || 'N/A'), margin + 3, startY)
-            pdf.text(String(retentionMetrics.totalRiders || 0), margin + retentionColWidth + 3, startY)
-            pdf.text(String(retentionMetrics.activeRiders || 0), margin + (retentionColWidth * 2) + 3, startY)
-            pdf.text(String(retentionMetrics.inactiveRiders || 0), margin + (retentionColWidth * 3) + 3, startY)
+            pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 8, 'F')
+            const hubLabel = pdf.splitTextToSize(String(selectedHub || 'N/A'), 60)[0] || 'N/A'
+            pdf.text(hubLabel, retentionCols[0], startY)
+            pdf.text(String(retentionMetrics.totalRiders || 0), retentionCols[1], startY)
+            pdf.text(String(retentionMetrics.activeRiders || 0), retentionCols[2], startY)
+            pdf.text(`${retentionMetrics.retentionRate || 0}%`, retentionCols[3], startY)
+            pdf.text(String(retentionMetrics.inactiveRiders || 0), retentionCols[4], startY)
+            pdf.text(`${retentionMetrics.attritionRate || 0}%`, retentionCols[5], startY)
 
             // Show attrition riders if any
             if (retentionMetrics.attritionRiders && retentionMetrics.attritionRiders.length > 0) {
@@ -2642,44 +3199,6 @@ const hubLevelGraphComparison = useMemo(() => {
               startY += 6
             })
 
-            // Daily trend data - filter by date range
-            let trendData = rider.trend || []
-            if (riderFromDate && riderToDate && trendData.length > 0) {
-              trendData = trendData.filter(t => {
-                const trendDate = t.date?.split('T')[0] || t.date
-                return trendDate >= riderFromDate && trendDate <= riderToDate
-              })
-            }
-            
-            if (trendData.length > 0) {
-              startY += 10
-              pdf.setFillColor(168, 48, 48)
-              pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
-              pdf.setTextColor(255, 255, 255)
-              pdf.setFontSize(9)
-              pdf.setFont(undefined, 'bold')
-              pdf.text('Date', margin + 3, startY)
-              pdf.text('Delivered', margin + colWidth + 3, startY)
-              startY += 8
-
-              pdf.setTextColor(51, 65, 85)
-              pdf.setFont(undefined, 'normal')
-              pdf.setFontSize(8)
-
-              trendData.forEach((t, index) => {
-                if (startY > 280) {
-                  pdf.addPage()
-                  startY = 15
-                }
-                if (index % 2 === 0) {
-                  pdf.setFillColor(248, 250, 252)
-                  pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
-                }
-                pdf.text(String(t.date), margin + 3, startY)
-                pdf.text(String(t.delivered), margin + colWidth + 3, startY)
-                startY += 6
-              })
-            }
           } else {
             pdf.text('Rider ID', margin + 3, startY)
             pdf.text('Rider Name', margin + colWidth + 3, startY)
@@ -2757,7 +3276,7 @@ const hubLevelGraphComparison = useMemo(() => {
       console.error('Error exporting PDF:', error)
       showMessage('error', 'Failed to export PDF. Please try again.')
     }
-  }, [dashboardView, filteredChartData, filteredRidersNoRoute, riderLevelData, getComparisonData, filteredStats, kpiGradeData, retentionMetrics, selectedHub, selectedCluster, selectedRider, selectedDate, riderFromDate, riderToDate, riderLevelChartData, showMessage])
+  }, [dashboardView, filteredChartData, filteredRidersNoRoute, riderLevelData, getComparisonData, filteredStats, kpiGradeData, retentionMetrics, selectedHub, hubSearchTerm, selectedCluster, selectedRider, selectedDate, riderFromDate, riderToDate, riderLevelChartData, hubLevelGraphComparison, hubDeliveryTrendDateLabel, selectedRiderRecords, performanceRecords, riderTrendRange, hubFromDate, hubToDate, hubCompareDateA, hubCompareDateB, hubDeliveryTrendRange, selectedCategory, hubDeliveryTrendTab, showMessage])
 
   const COLORS = ['#a83030', '#c94c4c', '#e07e7e', '#f0b1b1', '#742a2a']
 
