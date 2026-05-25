@@ -3696,7 +3696,7 @@ const hubLevelGraphComparison = useMemo(() => {
                           : 'text-slate-400 hover:text-white'
                       }`}
                     >
-                      Chart
+                      Line Chart
                     </button>
                     <button
                       onClick={() => setHubDeliveryTrendTab('graph')}
@@ -3706,7 +3706,7 @@ const hubLevelGraphComparison = useMemo(() => {
                           : 'text-slate-400 hover:text-white'
                       }`}
                     >
-                      Graph
+                      Bar Graph
                     </button>
                   </div>
                 </div>
@@ -3716,13 +3716,14 @@ const hubLevelGraphComparison = useMemo(() => {
                   onChange={(e) => setSelectedCategory(e.target.value)}
                   className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
                 >
+                  <option value="Total Delivered">Total Delivered</option>
+                  <option value="Cost Per Parcel">Cost Per Parcel</option>
+                  <option value="Delivered Ado">Delivered Ado</option>
+                  <option value="Dispatched Ado">Dispatched Ado</option>
                   <option value="Success Rate">Success Rate</option>
-                  <option value="Riders">Riders</option>
-                  <option value="Delivered">Delivered</option>
-                  <option value="On-Hold">On-Hold</option>
-                  <option value="Productivity">Productivity</option>
-                  <option value="Clear Floor Rate">Clear Floor Rate</option>
-                  <option value="Scorecard">Scorecard</option>
+                  <option value="Delivered Prod">Delivered Prod</option>
+                  <option value="Assigned Prod">Assigned Prod</option>
+                  <option value="Fleet Count">Fleet Count</option>
                 </select>
               </div>
             </div>
@@ -4236,7 +4237,7 @@ const hubLevelGraphComparison = useMemo(() => {
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  Chart
+                  Line Chart
                 </button>
                 <button
                   onClick={() => setRiderDeliveryTrendTab('graph')}
@@ -4246,7 +4247,7 @@ const hubLevelGraphComparison = useMemo(() => {
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  Graph
+                  Bar Graph
                 </button>
               </div>
             </div>
