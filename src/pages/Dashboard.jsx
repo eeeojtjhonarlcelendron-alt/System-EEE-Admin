@@ -36,7 +36,6 @@ import {
   Building2,
   ChevronDown,
   ChevronUp,
-  Globe,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
@@ -745,6 +744,10 @@ function Dashboard() {
         let performanceResult = initialPerformanceResult
         if (performanceResult?.data?.length === 0) {
           performanceResult = await getRecentPerformanceRecords(30)
+        }
+
+        if (dashboardResult?.error) {
+          showMessage('error', `Google Apps Script data could not load: ${dashboardResult.error.message}`)
         }
         
         // Process and set critical data immediately for fast UI render
@@ -3328,28 +3331,6 @@ const hubLevelGraphComparison = useMemo(() => {
             >
               <Building2 className="w-3.5 h-3.5" />
               Hub Level
-            </button>
-            <button
-              onClick={() => setDashboardView('rider')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-[11px] font-medium transition-all duration-180 ${
-                dashboardView === 'rider'
-                  ? 'bg-[hsl(0,58%,42%)] text-white shadow-[0_2px_8px_rgba(0,0,0,0.05)]'
-                  : 'text-[hsl(220,8%,55%)] hover:text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)]'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              Rider Level
-            </button>
-            <button
-              onClick={() => setDashboardView('overall')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-[11px] font-medium transition-all duration-180 ${
-                dashboardView === 'overall'
-                  ? 'bg-[hsl(0,58%,42%)] text-white shadow-[0_2px_8px_rgba(0,0,0,0.05)]'
-                  : 'text-[hsl(220,8%,55%)] hover:text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)]'
-              }`}
-            >
-              <Globe className="w-3.5 h-3.5" />
-              Overall
             </button>
           </div>
           <button

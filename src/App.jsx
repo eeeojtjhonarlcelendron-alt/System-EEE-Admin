@@ -1,15 +1,25 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Layout from './components/Layout'
 import Performance from './pages/Performance'
-import KPI from './pages/KPI'
-import Rider from './pages/Rider'
 import Clustering from './pages/Clustering'
+import { initializeDataService } from './lib/data'
 
 function AppRoutes() {
   const { user, loading, signOut } = useAuth()
+
+  // Initialize data service once on app load
+  useEffect(() => {
+    if (user && !loading) {
+      console.log('🚀 Initializing data service for authenticated user...')
+      initializeDataService().catch(err => {
+        console.error('❌ Failed to initialize data service:', err)
+      })
+    }
+  }, [user, loading])
 
   if (loading) {
     return (
@@ -40,8 +50,8 @@ function AppRoutes() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="data-management/performance" element={<Performance />} />
-        <Route path="data-management/kpi" element={<KPI />} />
-        <Route path="data-management/rider" element={<Rider />} />
+        <Route path="data-management/kpi" element={<Navigate to="/dashboard" replace />} />
+        <Route path="data-management/rider" element={<Navigate to="/dashboard" replace />} />
         <Route path="data-management/clustering" element={<Clustering />} />
       </Route>
     </Routes>

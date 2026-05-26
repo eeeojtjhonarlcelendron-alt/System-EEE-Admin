@@ -4,6 +4,53 @@ import * as XLSX from 'xlsx'
 import { getPerformanceRecords, getPerformanceRecordsPaginated, batchInsertPerformanceRecords, deleteAllPerformanceRecords, updatePerformanceRecord, getPerformanceRecordByRiderAndDate, getPerformanceRecordsByDateRange, refreshRiders, deletePerformanceRecord, insertSinglePerformanceRecord, getRiders, syncRidersFromPerformance } from '../lib/data'
 import { SkeletonPerformance } from '../components/Skeleton'
 
+const PERFORMANCE_SHEET_COLUMNS = [
+  'DATE',
+  'REGION',
+  'AREA CLUSTER',
+  'HUB NAME',
+  'FLEET COUNT',
+  'SUCCESS RATE',
+  'DELIVERED PROD',
+  'DISPATCHED PROD',
+  'COST PER PARCEL',
+  'DELIVERED ADO',
+  'DISPATCHED ADO'
+]
+
+const formatSheetNumber = (value) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return value ?? ''
+  return Number.isInteger(numeric) ? String(numeric) : String(Number(numeric.toFixed(4)))
+}
+
+const formatSheetWholeNumber = (value) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return value ?? ''
+  return String(Math.round(numeric))
+}
+
+const formatSheetSuccessRate = (value) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return ''
+  const percent = numeric <= 1 ? numeric * 100 : numeric
+  return `${Number(percent.toFixed(2))}%`
+}
+
+const toSheetPerformanceRow = (row) => ({
+  DATE: row.date || row.created_date || '',
+  REGION: row.region || '',
+  'AREA CLUSTER': row.cluster || '',
+  'HUB NAME': row.hub || '',
+  'FLEET COUNT': row.fleet_count || 0,
+  'SUCCESS RATE': formatSheetSuccessRate(row.success_rate ?? row.pecentage),
+  'DELIVERED PROD': formatSheetWholeNumber(row.delivered_products ?? row.delivered ?? 0),
+  'DISPATCHED PROD': formatSheetWholeNumber(row.dispatched_products ?? row.assigned ?? 0),
+  'COST PER PARCEL': formatSheetWholeNumber(row.cost_per_parcel ?? 0),
+  'DELIVERED ADO': formatSheetNumber(row.delivered_ado ?? 0),
+  'DISPATCHED ADO': formatSheetNumber(row.dispatched_ado ?? 0)
+})
+
 function parseDate(dateValue) {
   if (!dateValue) return null
   
@@ -253,23 +300,35 @@ function Performance() {
       const formattedData = jsonData
         .slice(1)
         .filter(row => row[0] && row[0].toString().trim() !== '')
-        .map((row) => {
+        .map((row, rowIndex) => {
           const rowData = {}
           headers.forEach((header, idx) => {
             rowData[header] = row[idx]
           })
+
+          const assigned = parseFloat(rowData['DISPATCHED PROD'] ?? rowData['Assigned']) || 0
+          const delivered = parseFloat(rowData['DELIVERED PROD'] ?? rowData['Delivered']) || 0
+          const successRate = rowData['SUCCESS RATE'] ?? rowData['Pecentage']
+          const parsedSuccessRate = (parseFloat(String(successRate).replace('%', '')) || 0)
+          const percentage = parsedSuccessRate > 1 ? parsedSuccessRate / 100 : parsedSuccessRate
+          const hub = rowData['HUB NAME'] || rowData['Operator Hub'] || ''
           
           return {
-            date: parseDate(rowData['Date']),
-            rider_id: rowData['Rider ID']?.toString().trim() || '',
-            driver_name: rowData['Rider Name'] || rowData['Rider name'] || rowData['rider_name'] || '',
-            hub: rowData['Operator Hub'] || '',
-            assigned: parseInt(rowData['Assigned']) || 0,
-            delivered: parseInt(rowData['Delivered']) || 0,
-            onhold: parseInt(rowData['Onhold']) || 0,
-            pecentage: (parseFloat(String(rowData['Pecentage']).replace('%', '')) || 0) / 100,
-            failed_rate: 1 - ((parseFloat(String(rowData['Pecentage']).replace('%', '')) || 0) / 100),
-            region: rowData['Region'] || '',
+            date: parseDate(rowData['DATE'] ?? rowData['Date']),
+            rider_id: rowData['Rider ID']?.toString().trim() || `${hub}-${rowIndex + 1}`,
+            driver_name: rowData['Rider Name'] || rowData['Rider name'] || rowData['rider_name'] || hub,
+            hub,
+            cluster: rowData['AREA CLUSTER'] || '',
+            fleet_count: parseFloat(rowData['FLEET COUNT']) || 0,
+            assigned,
+            delivered,
+            onhold: parseInt(rowData['Onhold']) || Math.max(assigned - delivered, 0),
+            pecentage: percentage,
+            failed_rate: 1 - percentage,
+            region: rowData['REGION'] || rowData['Region'] || '',
+            cost_per_parcel: parseFloat(rowData['COST PER PARCEL']) || 0,
+            delivered_ado: parseFloat(rowData['DELIVERED ADO']) || 0,
+            dispatched_ado: parseFloat(rowData['DISPATCHED ADO']) || 0
           }
         })
       
@@ -284,8 +343,8 @@ function Performance() {
       
       for (const record of formattedData) {
         // Skip records with missing required fields
-        if (!record.rider_id || !record.date) {
-          console.log('Skipping record - missing fields:', { rider_id: record.rider_id, date: record.date, driver_name: record.driver_name })
+        if (!record.date || !record.hub) {
+          console.log('Skipping record - missing fields:', { date: record.date, hub: record.hub })
           continue
         }
         toInsert.push(record)
@@ -401,18 +460,7 @@ function Performance() {
   }
 
   const handleExport = () => {
-    const exportData = filteredData.map(item => ({
-      'Date': item.date,
-      'Rider ID': item.rider_id,
-      'Rider Name': item.driver_name,
-      'Operator Hub': item.hub,
-      'Assigned': item.assigned,
-      'Delivered': item.delivered,
-      'Onhold': item.onhold,
-      'Pecentage': item.pecentage,
-      'Failed Rate': item.failed_rate,
-      'Region': item.region,
-    }))
+    const exportData = filteredData.map(toSheetPerformanceRow)
     
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
@@ -422,10 +470,10 @@ function Performance() {
 
   const handleDownloadTemplate = () => {
     const templateData = [
-      ['Date', 'Rider ID', 'Rider Name', 'Operator Hub', 'Assigned', 'Delivered', 'Onhold', 'Pecentage', 'Failed Rate', 'Region'],
-      ['1/1/2026', '340280', 'Angelo Pinca Tabucao', 'OP Basey Western Samar Hub', '70', '37', '33', '53%', '47%', 'VIS5'],
-      ['1/1/2026', '355408', 'Jeremie Delovieres Demateo', 'OP Basey Western Samar Hub', '70', '36', '34', '51%', '49%', 'VIS5'],
-      ['1/1/2026', '358729', 'Jose Obera Sabangan', 'OP Basey Western Samar Hub', '60', '37', '23', '62%', '38%', 'VIS5'],
+      PERFORMANCE_SHEET_COLUMNS,
+      ['2026-05-25', 'VIS2', 'South Cebu/Bohol', 'OP Argao Cebu Hub', '22', '73.9%', '49.41', '66.86', '0', '0', '0'],
+      ['2026-05-25', 'VIS2', 'South Cebu/Bohol', 'OP Dalaguete Cebu Hub', '26', '84.4%', '58.04', '68.73', '0', '0', '0'],
+      ['2026-05-25', 'VIS2', 'South Cebu/Bohol', 'OP Oslob Cebu Hub', '13', '86.6%', '60.62', '70.00', '0', '0', '0'],
     ]
     
     const csvContent = templateData.map(row => row.join(',')).join('\n')
@@ -598,21 +646,17 @@ function Performance() {
 
   // Export data to CSV
   const exportData = () => {
-    const headers = ['Date', 'Rider ID', 'Rider Name', 'Operator Hub', 'Assigned', 'Delivered', 'Onhold', 'Percentage', 'Failed Rate', 'Region']
+    const escapeCsvValue = (value) => {
+      const text = String(value ?? '')
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+    }
+
     const csvContent = [
-      headers.join(','),
-      ...filteredData.map(row => [
-        row.date || row.created_date || '',
-        row.rider_id || '',
-        row.driver_name || '',
-        row.hub || '',
-        row.assigned || 0,
-        row.delivered || 0,
-        row.onhold || 0,
-        ((row.pecentage || 0) * 100).toFixed(0) + '%',
-        ((row.failed_rate || 0) * 100).toFixed(0) + '%',
-        row.region || ''
-      ].join(','))
+      PERFORMANCE_SHEET_COLUMNS.join(','),
+      ...filteredData.map(row => {
+        const sheetRow = toSheetPerformanceRow(row)
+        return PERFORMANCE_SHEET_COLUMNS.map(column => escapeCsvValue(sheetRow[column])).join(',')
+      })
     ].join('\n')
     
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
@@ -672,7 +716,7 @@ function Performance() {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Name or ID..."
+                placeholder="Hub, region, or cluster..."
                 value={searchTerm}
                 onChange={(e) => handleSearchChange(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
@@ -743,52 +787,26 @@ function Performance() {
       <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 overflow-hidden">
         <div className="overflow-x-auto max-h-[calc(100vh-280px)]">
           <table className="w-full">
-            <thead className="bg-slate-700/50 sticky top-0 z-10">
+            <thead className="bg-slate-800 sticky top-0 z-10">
               <tr className="border-b border-slate-600">
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Actions</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Date</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Rider ID</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Rider Name</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Operator Hub</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Assigned</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Delivered</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Onhold</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Percentage</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Failed Rate</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Region</th>
+                {PERFORMANCE_SHEET_COLUMNS.map(column => (
+                  <th key={column} className="px-1.5 py-1.5 text-left text-[9px] font-semibold text-slate-200 uppercase tracking-wide bg-slate-800">
+                    {column}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
               {paginatedData.map((row, index) => (
                 <tr key={`${row.rider_id}-${row.date}-${index}`} className="hover:bg-slate-700/50 transition-all duration-200 group">
-                  <td className="px-2 py-1.5 whitespace-nowrap">
-                    <div className="flex items-center gap-0.5">
-                      <button
-                        onClick={() => handleEdit(row)}
-                        className="p-1 text-maroon-400 hover:bg-maroon-500/20 rounded transition-all duration-200 hover:scale-110"
-                        title="Edit"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(row.id)}
-                        className="p-1 text-red-400 hover:bg-red-500/20 rounded transition-all duration-200 hover:scale-110"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.date || row.created_date}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs font-semibold text-white">{row.rider_id}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-300">{row.driver_name}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.hub}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.assigned}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.delivered}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.onhold}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{(row.pecentage * 100).toFixed(0)}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.failed_rate > 1 ? row.failed_rate.toFixed(0) : (row.failed_rate * 100).toFixed(0)}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.region}</td>
+                  {PERFORMANCE_SHEET_COLUMNS.map(column => {
+                    const sheetRow = toSheetPerformanceRow(row)
+                    return (
+                      <td key={column} className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">
+                        {sheetRow[column]}
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -1029,7 +1047,7 @@ function Performance() {
               </div>
               <div className="bg-slate-700/50 rounded-lg p-3">
                 <p className="text-slate-300 text-xs font-medium mb-1">Required columns:</p>
-                <p className="text-slate-400 text-[10px]">Date, Rider ID, Rider Name, Operator Hub, Assigned, Delivered, Onhold, Pecentage, Failed Rate, Region</p>
+                <p className="text-slate-400 text-[10px]">{PERFORMANCE_SHEET_COLUMNS.join(', ')}</p>
               </div>
               
               {/* Import Progress */}
