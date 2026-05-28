@@ -6,6 +6,7 @@ import {
   getDashboardStats,
   getRiderHubStats,
   getPerformanceRecordsPaginated,
+  getPerformanceRecords,
   getRecentPerformanceRecords,
   getPerformanceRecordsByRiderId,
   getKpiRecords,
@@ -70,6 +71,7 @@ import {
   PolarGrid,
   PolarAngleAxis,
   PolarRadiusAxis,
+  Legend,
   LabelList
 } from 'recharts'
 
@@ -535,7 +537,7 @@ function Dashboard() {
   const [riderSearchTerm, setRiderSearchTerm] = useState('')
   const [showRiderDropdown, setShowRiderDropdown] = useState(false)
   const [selectedCluster, setSelectedCluster] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState('Success Rate')
+  const [selectedCategory, setSelectedCategory] = useState('Cost Per Parcel')
   const [dashboardView, setDashboardView] = useState('hub') // 'hub', 'rider', or 'overall'
   const [selectedDate, setSelectedDate] = useState('') // empty by default
   const [clusterLeaders, setClusterLeaders] = useState([])
@@ -607,6 +609,15 @@ function Dashboard() {
       .pop() || ''
   }
 
+  const formatShortRangeLabel = (startDate, endDate) => {
+    const formatPart = (dateStr) => {
+      const date = parseDateString(dateStr)
+      if (!date) return dateStr
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    }
+    return `${formatPart(startDate)} to ${formatPart(endDate)}`
+  }
+
   const getRangeBounds = (rangeType, latestDateString) => {
     const latestDate = parseDateString(latestDateString)
     if (!latestDate || rangeType === 'ALL') return { start: '', end: '' }
@@ -654,6 +665,16 @@ function Dashboard() {
   const showMessage = (type, text) => {
     setMessage({ type, text })
     setTimeout(() => setMessage({ type: '', text: '' }), 5000)
+  }
+
+  const roundGraphValue = (value) => {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) ? Math.round(numeric) : 0
+  }
+
+  const formatGraphValue = (value, metric) => {
+    const rounded = roundGraphValue(value)
+    return metric === 'Success Rate' ? `${rounded}%` : rounded
   }
 
   const processPerformanceChartData = useCallback((records) => {
@@ -718,7 +739,7 @@ function Dashboard() {
         'On-Hold': item.on_hold,
         'Productivity': item.productivityCount > 0 ? Math.round(item.productivity / item.productivityCount) : 0,
         'Clear Floor Rate': item.clearFloorCount > 0 ? Math.round(item.clear_floor_rate / item.clearFloorCount) : 0,
-        'Scorecard': item.scoreCount > 0 ? (item.score / item.scoreCount).toFixed(1) : 0
+        'Scorecard': item.scoreCount > 0 ? roundGraphValue(item.score / item.scoreCount) : 0
       }))
 
     setPerformanceData(chartData)
@@ -738,12 +759,12 @@ function Dashboard() {
         const [dashboardResult, kpiMetricsResult, initialPerformanceResult] = await Promise.all([
           getDashboardMetrics(14),                    // Only 14 days for initial load (~400-500 rows vs 8450)
           getKPIMetricsByHub(),                       // ~0.25s
-          getRecentPerformanceRecords(14)             // Wider initial range to avoid empty recent data
+          getPerformanceRecords()                     // Fetch all performance records for dropdown data
         ])
         
         let performanceResult = initialPerformanceResult
         if (performanceResult?.data?.length === 0) {
-          performanceResult = await getRecentPerformanceRecords(30)
+          performanceResult = await getPerformanceRecords()
         }
 
         if (dashboardResult?.error) {
@@ -757,8 +778,31 @@ function Dashboard() {
             console.log('Sample dashboard metric:', dashboardResult.data[0])
           }
           setDashboardMetrics(dashboardResult.data)
+        }
+
+        // Transform PERFORMANCE records into chart data with dropdown categories
+        if (performanceResult?.data && performanceResult.data.length > 0) {
+          console.log('Performance records loaded:', performanceResult.data.length, 'rows')
+          console.log('Sample performance record:', performanceResult.data[0])
           
-          // Transform dashboard metrics into chart data
+          const chartData = performanceResult.data
+            .sort((a, b) => new Date(a.date) - new Date(b.date))
+            .map(item => ({
+              month: item.date?.slice(5) || item.date,
+              'Total Delivered': Math.round(parseFloat(item.delivered_products || item.delivered || 0)) || 0,
+              'Cost Per Parcel': Math.round(parseFloat(item.cost_per_parcel || 0)) || 0,
+              'Delivered Ado': Math.round(parseFloat(item.delivered_ado || 0)) || 0,
+              'Dispatched Ado': Math.round(parseFloat(item.dispatched_ado || 0)) || 0,
+              'Success Rate': Math.round(parseFloat(item.success_rate || 0)) || 0,
+              'Delivered Prod': Math.round(parseFloat(item.delivered_products || 0)) || 0,
+              'Assigned Prod': Math.round(parseFloat(item.dispatched_products || item.assigned || 0)) || 0,
+              'Fleet Count': Math.round(parseFloat(item.fleet_count || 0)) || 0
+            }))
+          
+          setPerformanceData(chartData)
+          setPerformanceRecords(performanceResult.data)
+        } else if (dashboardResult.data) {
+          // Fallback to dashboard metrics if performance data is not available
           const chartData = dashboardResult.data
             .sort((a, b) => new Date(a.date) - new Date(b.date))
             .map(item => ({
@@ -769,14 +813,10 @@ function Dashboard() {
               'On-Hold': Math.round(parseFloat(item.on_hold)) || 0,
               'Productivity': Math.round(parseFloat(item.productivity)) || 0,
               'Clear Floor Rate': Math.round(parseFloat(item.clear_floor_rate)) || 0,
-              'Scorecard': parseFloat(item.scorecard).toFixed(1) || 0
+              'Scorecard': roundGraphValue(item.scorecard)
             }))
           
           setPerformanceData(chartData)
-        }
-
-        if (performanceResult?.data) {
-          setPerformanceRecords(performanceResult.data)
         }
         
         if (kpiMetricsResult.data) {
@@ -957,6 +997,20 @@ function Dashboard() {
       hub.toLowerCase().includes(hubSearchTerm.toLowerCase())
     )
   }, [uniqueHubs, hubSearchTerm])
+
+  const hubDropdownOptions = useMemo(() => {
+    if (!hubSearchTerm || hubSearchTerm === selectedHub) return uniqueHubs
+    return filteredHubs
+  }, [filteredHubs, hubSearchTerm, selectedHub, uniqueHubs])
+
+  useEffect(() => {
+    if (dashboardView !== 'hub') return
+    if (selectedHub || uniqueHubs.length === 0) return
+
+    const defaultHub = uniqueHubs[0]
+    setSelectedHub(defaultHub)
+    setHubSearchTerm(defaultHub)
+  }, [dashboardView, selectedHub, uniqueHubs])
 
   // Get unique riders for filter - from ridersData
   const uniqueRiders = useMemo(() => {
@@ -1658,6 +1712,72 @@ const filteredChartData = useMemo(() => {
       }
     }
 
+    const mapMetricRow = (item, monthValue = item.date) => ({
+      month: monthValue,
+      date: item.date,
+      'Success Rate': item.count > 0 ? roundGraphValue((item.success_rate / item.count) * 100) : 0,
+      'Riders': roundGraphValue(item.riders),
+      'Total Delivered': roundGraphValue(item.delivered),
+      'Cost Per Parcel': item.cost_per_parcel_count > 0 ? roundGraphValue(item.cost_per_parcel / item.cost_per_parcel_count) : 0,
+      'Delivered Ado': roundGraphValue(item.delivered_ado),
+      'Dispatched Ado': roundGraphValue(item.dispatched_ado),
+      'Delivered': roundGraphValue(item.delivered),
+      'Delivered Prod': roundGraphValue(item.delivered),
+      'On-Hold': roundGraphValue(item.on_hold),
+      'Productivity': item.count > 0 ? roundGraphValue(item.productivity / item.count) : 0,
+      'Assigned Prod': item.count > 0 ? roundGraphValue(item.productivity / item.count) : 0,
+      'Fleet Count': roundGraphValue(item.fleet_count),
+      'Clear Floor Rate': item.count > 0 ? roundGraphValue(item.clear_floor_rate / item.count) : 0,
+      'Scorecard': item.count > 0 ? roundGraphValue(item.scorecard / item.count) : 0
+    })
+
+    const aggregateMetricRows = (rows) => {
+      const aggregated = {}
+
+      rows.forEach(item => {
+        const date = item.date?.split('T')[0] || item.date
+        if (!date) return
+
+        if (!aggregated[date]) {
+          aggregated[date] = {
+            date,
+            count: 0,
+            delivered: 0,
+            riders: 0,
+            on_hold: 0,
+            success_rate: 0,
+            productivity: 0,
+            cost_per_parcel: 0,
+            cost_per_parcel_count: 0,
+            delivered_ado: 0,
+            dispatched_ado: 0,
+            fleet_count: 0,
+            clear_floor_rate: 0,
+            scorecard: 0
+          }
+        }
+
+        const entry = aggregated[date]
+        entry.delivered += Number(item.delivered) || 0
+        entry.riders += Number(item.riders) || 0
+        entry.on_hold += Number(item.on_hold) || 0
+        entry.success_rate += Number(item.success_rate) || 0
+        entry.productivity += Number(item.productivity) || 0
+        entry.cost_per_parcel += Number(item.cost_per_parcel) || 0
+        if (Number(item.cost_per_parcel) > 0) {
+          entry.cost_per_parcel_count += 1
+        }
+        entry.delivered_ado += Number(item.delivered_ado) || 0
+        entry.dispatched_ado += Number(item.dispatched_ado) || 0
+        entry.fleet_count += Number(item.fleet_count) || 0
+        entry.clear_floor_rate += Number(item.clear_floor_rate) || 0
+        entry.scorecard += Number(item.scorecard) || 0
+        entry.count += 1
+      })
+
+      return Object.values(aggregated).sort((a, b) => a.date.localeCompare(b.date))
+    }
+
     if (hubCompareDateA && hubCompareDateB) {
       console.log('Applying hub compare dates:', hubCompareDateA, hubCompareDateB)
       filtered = filtered.filter(item => {
@@ -1722,49 +1842,7 @@ const filteredChartData = useMemo(() => {
       })
     }
 
-    const aggregated = {}
-
-    filtered.forEach(item => {
-      const date = item.date?.split('T')[0] || item.date
-      if (!date) return
-
-      if (!aggregated[date]) {
-        aggregated[date] = {
-          date,
-          count: 0,
-          delivered: 0,
-          riders: 0,
-          on_hold: 0,
-          success_rate: 0,
-          productivity: 0,
-          clear_floor_rate: 0,
-          scorecard: 0
-        }
-      }
-
-      const entry = aggregated[date]
-      entry.delivered += Number(item.delivered) || 0
-      entry.riders += Number(item.riders) || 0
-      entry.on_hold += Number(item.on_hold) || 0
-      entry.success_rate += Number(item.success_rate) || 0
-      entry.productivity += Number(item.productivity) || 0
-      entry.clear_floor_rate += Number(item.clear_floor_rate) || 0
-      entry.scorecard += Number(item.scorecard) || 0
-      entry.count += 1
-    })
-
-    const chartData = Object.values(aggregated)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map(item => ({
-        month: item.date,
-        'Success Rate': item.count > 0 ? Number(((item.success_rate / item.count) * 100).toFixed(1)) : 0,
-        'Riders': item.riders,
-        'Delivered': item.delivered,
-        'On-Hold': item.on_hold,
-        'Productivity': item.count > 0 ? Number((item.productivity / item.count).toFixed(1)) : 0,
-        'Clear Floor Rate': item.count > 0 ? Number((item.clear_floor_rate / item.count).toFixed(1)) : 0,
-        'Scorecard': item.count > 0 ? Number((item.scorecard / item.count).toFixed(1)) : 0
-      }))
+    const chartData = aggregateMetricRows(filtered).map(item => mapMetricRow(item))
     
     console.log('Final chart data:', chartData?.length || 0, 'rows')
     if (chartData?.length > 0) {
@@ -1873,7 +1951,7 @@ const filteredChartData = useMemo(() => {
         : 0
       
       const avgScorecard = totals.kpiCount > 0
-        ? (totals.scorecard / totals.kpiCount).toFixed(1)
+        ? roundGraphValue(totals.scorecard / totals.kpiCount)
         : 0
       
       const avgProductivity = totals.riders.size > 0
@@ -1887,7 +1965,7 @@ const filteredChartData = useMemo(() => {
         'On-Hold': totals.onHold,
         'Productivity': avgProductivity,
         'Clear Floor Rate': avgClearFloorRate,
-        'Scorecard': parseFloat(avgScorecard)
+        'Scorecard': roundGraphValue(avgScorecard)
       }
     }
 
@@ -1964,13 +2042,146 @@ const chartDomain = useMemo(() => {
   const values = filteredChartData.map(item => Number(item[selectedCategory]) || 0)
   const maxValue = Math.max(...values, 0)
 
-  if (['Success Rate', 'Productivity', 'Clear Floor Rate', 'Scorecard'].includes(selectedCategory)) {
-    const upper = Math.max(10, Math.ceil(maxValue * 1.2))
-    return [0, upper]
+  // Percentage-like metrics should be capped at 100
+  if (['Success Rate', 'Assigned Prod'].includes(selectedCategory)) {
+    // For percentage metrics, cap axis at 100
+    return [0, 100]
   }
 
   return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
 }, [filteredChartData, selectedCategory])
+
+// Compute explicit Y axis ticks when domain is capped at 100
+const yTicks = useMemo(() => {
+  if (!chartDomain || chartDomain.length !== 2) return undefined
+  const max = chartDomain[1]
+  if (max === 100) return [0,20,40,60,80,100]
+  return undefined
+}, [chartDomain])
+
+const hubSevenDayComparisonData = useMemo(() => {
+  if (dashboardView !== 'hub' || !selectedHub || selectedHub === 'All Hubs' || !dashboardMetrics?.length) {
+    return []
+  }
+
+  const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
+  const hubRows = dashboardMetrics.filter(item => String(item.hub || '').trim().toLowerCase() === selectedHubNorm)
+  const latestDateString = getMaxDateString(hubRows.map(item => item.date?.split('T')[0] || item.date))
+  if (!latestDateString) return []
+
+  const lastRange = getRangeBounds('L7D', latestDateString)
+  const priorRange = getRangeBounds('P7D', latestDateString)
+
+  const aggregateMetricRows = (rows) => {
+    const aggregated = {}
+
+    rows.forEach(item => {
+      const date = item.date?.split('T')[0] || item.date
+      if (!date) return
+
+      if (!aggregated[date]) {
+        aggregated[date] = {
+          date,
+          count: 0,
+          delivered: 0,
+          riders: 0,
+          on_hold: 0,
+          success_rate: 0,
+          productivity: 0,
+          cost_per_parcel: 0,
+          cost_per_parcel_count: 0,
+          delivered_ado: 0,
+          dispatched_ado: 0,
+          fleet_count: 0,
+          clear_floor_rate: 0,
+          scorecard: 0
+        }
+      }
+
+      const entry = aggregated[date]
+      entry.delivered += Number(item.delivered) || 0
+      entry.riders += Number(item.riders) || 0
+      entry.on_hold += Number(item.on_hold) || 0
+      entry.success_rate += Number(item.success_rate) || 0
+      entry.productivity += Number(item.productivity) || 0
+      entry.cost_per_parcel += Number(item.cost_per_parcel) || 0
+      if (Number(item.cost_per_parcel) > 0) {
+        entry.cost_per_parcel_count += 1
+      }
+      entry.delivered_ado += Number(item.delivered_ado) || 0
+      entry.dispatched_ado += Number(item.dispatched_ado) || 0
+      entry.fleet_count += Number(item.fleet_count) || 0
+      entry.clear_floor_rate += Number(item.clear_floor_rate) || 0
+      entry.scorecard += Number(item.scorecard) || 0
+      entry.count += 1
+    })
+
+    return Object.values(aggregated).sort((a, b) => a.date.localeCompare(b.date))
+  }
+
+  const mapMetricRow = (item) => ({
+    'Success Rate': item.count > 0 ? roundGraphValue((item.success_rate / item.count) * 100) : 0,
+    'Riders': roundGraphValue(item.riders),
+    'Total Delivered': roundGraphValue(item.delivered),
+    'Cost Per Parcel': item.cost_per_parcel_count > 0 ? roundGraphValue(item.cost_per_parcel / item.cost_per_parcel_count) : 0,
+    'Delivered Ado': roundGraphValue(item.delivered_ado),
+    'Dispatched Ado': roundGraphValue(item.dispatched_ado),
+    'Delivered': roundGraphValue(item.delivered),
+    'Delivered Prod': roundGraphValue(item.delivered),
+    'On-Hold': roundGraphValue(item.on_hold),
+    'Productivity': item.count > 0 ? roundGraphValue(item.productivity / item.count) : 0,
+    'Assigned Prod': item.count > 0 ? roundGraphValue(item.productivity / item.count) : 0,
+    'Fleet Count': roundGraphValue(item.fleet_count),
+    'Clear Floor Rate': item.count > 0 ? roundGraphValue(item.clear_floor_rate / item.count) : 0,
+    'Scorecard': item.count > 0 ? roundGraphValue(item.scorecard / item.count) : 0
+  })
+
+  const lastAggregated = aggregateMetricRows(hubRows.filter(item => {
+    const itemDate = item.date?.split('T')[0] || item.date
+    return itemDate >= lastRange.start && itemDate <= lastRange.end
+  }))
+  const priorAggregated = aggregateMetricRows(hubRows.filter(item => {
+    const itemDate = item.date?.split('T')[0] || item.date
+    return itemDate >= priorRange.start && itemDate <= priorRange.end
+  }))
+
+  const priorByIndex = new Map(priorAggregated.map((item, index) => [index, mapMetricRow(item)]))
+  const currentLabel = formatShortRangeLabel(lastRange.start, lastRange.end)
+  const priorLabel = formatShortRangeLabel(priorRange.start, priorRange.end)
+
+  return lastAggregated
+    .map((item, originalIndex) => {
+      const current = mapMetricRow(item)
+      const prior = priorByIndex.get(originalIndex) || {}
+      const date = parseDateString(item.date)
+      return {
+        month: date ? date.toLocaleDateString('en-US', { weekday: 'short' }) : item.date,
+        currentPeriod: current[selectedCategory] || 0,
+        priorPeriod: prior[selectedCategory] || 0,
+        currentLabel,
+        priorLabel
+      }
+    })
+}, [dashboardMetrics, selectedHub, dashboardView, selectedCategory])
+
+const hubSevenDayComparisonDomain = useMemo(() => {
+  if (!hubSevenDayComparisonData.length) return [0, 'auto']
+  const values = hubSevenDayComparisonData.flatMap(item => [
+    Number(item.currentPeriod) || 0,
+    Number(item.priorPeriod) || 0
+  ])
+  const maxValue = Math.max(...values, 0)
+  // If comparison is for percentage-like metrics, cap at 100
+  if (['Success Rate', 'Assigned Prod'].includes(selectedCategory)) return [0, 100]
+  return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
+}, [hubSevenDayComparisonData, selectedCategory])
+
+// Hub comparison explicit ticks when capped at 100
+const hubYTicks = useMemo(() => {
+  if (!hubSevenDayComparisonDomain || hubSevenDayComparisonDomain.length !== 2) return undefined
+  if (hubSevenDayComparisonDomain[1] === 100) return [0,20,40,60,80,100]
+  return undefined
+}, [hubSevenDayComparisonDomain])
 
 // Calculate hub level period comparison data for Graph Comparison
 const hubLevelGraphComparison = useMemo(() => {
@@ -2033,6 +2244,11 @@ const hubLevelGraphComparison = useMemo(() => {
       delivered: 0,
       on_hold: 0,
       productivity: 0,
+      cost_per_parcel: 0,
+      cost_per_parcel_count: 0,
+      delivered_ado: 0,
+      dispatched_ado: 0,
+      fleet_count: 0,
       clear_floor_rate: 0,
       scorecard: 0,
       count: 0
@@ -2044,19 +2260,33 @@ const hubLevelGraphComparison = useMemo(() => {
       totals.delivered += Number(item.delivered) || 0
       totals.on_hold += Number(item.on_hold) || 0
       totals.productivity += Number(item.productivity) || 0
+      totals.cost_per_parcel += Number(item.cost_per_parcel) || 0
+      if (Number(item.cost_per_parcel) > 0) {
+        totals.cost_per_parcel_count += 1
+      }
+      totals.delivered_ado += Number(item.delivered_ado) || 0
+      totals.dispatched_ado += Number(item.dispatched_ado) || 0
+      totals.fleet_count += Number(item.fleet_count) || 0
       totals.clear_floor_rate += Number(item.clear_floor_rate) || 0
       totals.scorecard += Number(item.scorecard) || 0
       totals.count++
     })
 
     return {
-      'Success Rate': totals.count > 0 ? Number(((totals.success_rate / totals.count) * 100).toFixed(1)) : 0,
-      'Riders': totals.riders,
-      'Delivered': totals.delivered,
-      'On-Hold': totals.on_hold,
-      'Productivity': totals.count > 0 ? Number((totals.productivity / totals.count).toFixed(1)) : 0,
-      'Clear Floor Rate': totals.count > 0 ? Number((totals.clear_floor_rate / totals.count).toFixed(1)) : 0,
-      'Scorecard': totals.count > 0 ? Number((totals.scorecard / totals.count).toFixed(1)) : 0
+      'Success Rate': totals.count > 0 ? roundGraphValue((totals.success_rate / totals.count) * 100) : 0,
+      'Riders': roundGraphValue(totals.riders),
+      'Total Delivered': roundGraphValue(totals.delivered),
+      'Cost Per Parcel': totals.cost_per_parcel_count > 0 ? roundGraphValue(totals.cost_per_parcel / totals.cost_per_parcel_count) : 0,
+      'Delivered Ado': roundGraphValue(totals.delivered_ado),
+      'Dispatched Ado': roundGraphValue(totals.dispatched_ado),
+      'Delivered': roundGraphValue(totals.delivered),
+      'Delivered Prod': totals.count > 0 ? roundGraphValue(totals.delivered / totals.count) : 0,
+      'On-Hold': roundGraphValue(totals.on_hold),
+      'Productivity': totals.count > 0 ? roundGraphValue(totals.productivity / totals.count) : 0,
+      'Assigned Prod': totals.count > 0 ? roundGraphValue(totals.productivity / totals.count) : 0,
+      'Fleet Count': totals.count > 0 ? roundGraphValue(totals.fleet_count / totals.count) : 0,
+      'Clear Floor Rate': totals.count > 0 ? roundGraphValue(totals.clear_floor_rate / totals.count) : 0,
+      'Scorecard': totals.count > 0 ? roundGraphValue(totals.scorecard / totals.count) : 0
     }
   }
 
@@ -2071,6 +2301,24 @@ const hubLevelGraphComparison = useMemo(() => {
 
   return result
 }, [dashboardMetrics, selectedHub, dashboardView])
+
+// Domain for the hub-level graph comparison (Graph Comparison chart)
+const hubLevelGraphComparisonDomain = useMemo(() => {
+  if (!hubLevelGraphComparison || hubLevelGraphComparison.length === 0) return [0, 'auto']
+  const values = hubLevelGraphComparison.flatMap(item => {
+    const v = Number(item[selectedCategory]) || 0
+    return [v]
+  })
+  const maxValue = Math.max(...values, 0)
+  if (['Success Rate', 'Assigned Prod'].includes(selectedCategory)) return [0, 100]
+  return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
+}, [hubLevelGraphComparison, selectedCategory])
+
+const hubLevelYTicks = useMemo(() => {
+  if (!hubLevelGraphComparisonDomain || hubLevelGraphComparisonDomain.length !== 2) return undefined
+  if (hubLevelGraphComparisonDomain[1] === 100) return [0,20,40,60,80,100]
+  return undefined
+}, [hubLevelGraphComparisonDomain])
 
   // Close hub dropdown when clicking outside
   useEffect(() => {
@@ -2517,7 +2765,7 @@ const hubLevelGraphComparison = useMemo(() => {
     })
 
     return Array.from(dateMap.entries())
-      .map(([date, value]) => ({ date, value }))
+      .map(([date, value]) => ({ date, value: roundGraphValue(value) }))
       .sort((a, b) => a.date.localeCompare(b.date))
   }, [performanceRecords, selectedRider, selectedRiderRecords, riderTrendMetric, riderFromDate, riderToDate, riderTrendRange])
 
@@ -2764,8 +3012,8 @@ const hubLevelGraphComparison = useMemo(() => {
           .sort((a, b) => a.date.localeCompare(b.date))
           .map(item => ({
             ...item,
-            successRate: item.assigned > 0 ? Number(((item.delivered / item.assigned) * 100).toFixed(1)) : 0,
-            productivity: item.assigned
+            successRate: item.assigned > 0 ? roundGraphValue((item.delivered / item.assigned) * 100) : 0,
+            productivity: roundGraphValue(item.assigned)
           }))
       }
 
@@ -3370,8 +3618,8 @@ const hubLevelGraphComparison = useMemo(() => {
             />
             {showHubDropdown && (
               <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
-                {filteredHubs.length > 0 ? (
-                  filteredHubs.map(hub => (
+                {hubDropdownOptions.length > 0 ? (
+                  hubDropdownOptions.map(hub => (
                     <div
                       key={hub}
                       onClick={() => {
@@ -3409,23 +3657,6 @@ const hubLevelGraphComparison = useMemo(() => {
               type="date"
               value={hubToDate}
               onChange={(e) => setHubToDate(e.target.value)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
-            />
-          </div>
-
-          {/* Compare Dates */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-[hsl(220,8%,55%)]">Compare:</span>
-            <input
-              type="date"
-              value={hubCompareDateA}
-              onChange={(e) => setHubCompareDateA(e.target.value)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
-            />
-            <input
-              type="date"
-              value={hubCompareDateB}
-              onChange={(e) => setHubCompareDateB(e.target.value)}
               className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
             />
           </div>
@@ -3597,59 +3828,105 @@ const hubLevelGraphComparison = useMemo(() => {
 
       {/* KPI Stats Row - Symmetrical 7 Metrics - Hub Level Only */}
       {dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs' && (
-      <div className="flex gap-2">
-        {/* Determine if visual sections have data to keep KPI cards consistent */}
-        {
-          (() => {
-            // compute hubHasVisualData in render scope so it's updated with hooks
-            // fallback to true for non-hub views to preserve existing behavior
-            // (this only affects hub-level KPI cards)
-            // Note: `filteredChartData`, `hubLevelGraphComparison`, and `kpiGradeData`
-            // are defined above and kept in dependencies for correctness.
+      <div>
+        {/* Compute top KPIs for the selected hub and date range */}
+        {(() => {
+          const hubLevelTopKpis = (function() {
+            const normalizeHub = v => String(v || '').trim().toLowerCase()
+            const selectedHubNorm = normalizeHub(selectedHub)
+
+            let perf = Array.isArray(performanceRecords) ? performanceRecords.slice() : []
+            let metrics = Array.isArray(dashboardMetrics) ? dashboardMetrics.slice() : []
+            let kpi = Array.isArray(kpiData) ? kpiData.slice() : []
+
+            if (selectedHub && selectedHub !== 'All Hubs') {
+              perf = perf.filter(p => normalizeHub(p.hub) === selectedHubNorm)
+              metrics = metrics.filter(m => normalizeHub(m.hub) === selectedHubNorm)
+              kpi = kpi.filter(k => normalizeHub(k.operator_hub || k.hub) === selectedHubNorm)
+            }
+
+            if (hubFromDate && hubToDate) {
+              const start = hubFromDate
+              const end = hubToDate
+              perf = perf.filter(p => {
+                const d = p.date?.split('T')[0] || p.date
+                return d >= start && d <= end
+              })
+              metrics = metrics.filter(m => {
+                const d = m.date?.split('T')[0] || m.date
+                return d >= start && d <= end
+              })
+              kpi = kpi.filter(k => {
+                const d = k.date?.split('T')[0] || k.date
+                return d >= start && d <= end
+              })
+            } else if (selectedDate) {
+              perf = perf.filter(p => {
+                const d = p.date?.split('T')[0] || p.date
+                return d === selectedDate
+              })
+              metrics = metrics.filter(m => {
+                const d = m.date?.split('T')[0] || m.date
+                return d === selectedDate
+              })
+              kpi = kpi.filter(k => {
+                const d = k.date?.split('T')[0] || k.date
+                return d === selectedDate
+              })
+            }
+
+            let costSum = 0, costCount = 0
+            let delAdo = 0, dispAdo = 0, deliveredTotal = 0, assignedTotal = 0
+            let prodSum = 0, prodCount = 0
+            let fleetSum = 0, fleetCount = 0
+
+            if (perf.length > 0) {
+              perf.forEach(r => {
+                const cp = Number(r.cost_per_parcel) || 0
+                if (cp > 0) { costSum += cp; costCount++ }
+                delAdo += Number(r.delivered_ado) || 0
+                dispAdo += Number(r.dispatched_ado) || 0
+                deliveredTotal += Number(r.delivered) || 0
+                assignedTotal += Number(r.assigned) || 0
+                prodSum += Number(r.productivity) || 0
+                if (Number(r.fleet_count)) { fleetSum += Number(r.fleet_count); fleetCount++ }
+              })
+            } else if (metrics.length > 0) {
+              metrics.forEach(m => {
+                const cp = Number(m.cost_per_parcel) || 0
+                if (cp > 0) { costSum += cp; costCount++ }
+                delAdo += Number(m.delivered_ado) || 0
+                dispAdo += Number(m.dispatched_ado) || 0
+                deliveredTotal += Number(m.delivered) || 0
+                assignedTotal += Number(m.productivity) || 0
+                prodSum += Number(m.productivity) || 0; prodCount++
+                if (Number(m.fleet_count)) { fleetSum += Number(m.fleet_count); fleetCount++ }
+              })
+            }
+
+            const costPerParcel = costCount > 0 ? Math.round(costSum / costCount) : 0
+            const deliveredAdo = Math.round(delAdo)
+            const dispatchedAdo = Math.round(dispAdo)
+            const successRate = Number(filteredStats.successRate) || 0
+            const deliveredProd = (perf.length > 0 || metrics.length > 0) ? Math.round(deliveredTotal / Math.max(1, (perf.length || metrics.length))) : 0
+            const assignedProd = perf.length > 0 ? Math.round(assignedTotal / Math.max(1, perf.length)) : (prodCount > 0 ? Math.round(prodSum / prodCount) : 0)
+            const fleetCountAvg = fleetCount > 0 ? Math.round(fleetSum / fleetCount) : 0
+
+            return { costPerParcel, deliveredAdo, dispatchedAdo, successRate, deliveredProd, assignedProd, fleetCount: fleetCountAvg }
           })()
-        }
-        <CompactStatCard 
-          title="Success Rate" 
-          value={`${filteredStats.successRate || 0}%`} 
-          icon={CheckCircle}
-          accentColor="bg-green-600"
-        />
-        <CompactStatCard 
-          title="Riders" 
-          value={filteredStats.activeRiders?.toLocaleString() || '0'} 
-          icon={Users}
-          accentColor="bg-blue-600"
-        />
-        <CompactStatCard 
-          title="Delivered" 
-          value={filteredStats.delivered?.toLocaleString() || '0'} 
-          icon={Package}
-          accentColor="bg-emerald-600"
-        />
-        <CompactStatCard 
-          title="On-Hold" 
-          value={filteredStats.onHold?.toLocaleString() || '0'} 
-          icon={PauseCircle}
-          accentColor="bg-orange-600"
-        />
-        <CompactStatCard 
-          title="Productivity" 
-          value={`${filteredStats.productivity || 0}`} 
-          icon={TrendingUp}
-          accentColor="bg-cyan-600"
-        />
-        <CompactStatCard 
-          title="Clear Floor" 
-          value={`${filteredStats.clearFloorRate || 0}%`} 
-          icon={Sparkles}
-          accentColor="bg-indigo-600"
-        />
-        <CompactStatCard 
-          title="Scorecard" 
-          value={filteredStats.scorecard || '0.0'} 
-          icon={Target}
-          accentColor="bg-purple-600"
-        />
+
+          return (
+            <div className="flex gap-2">
+              <CompactStatCard title="Cost Per Parcel" value={hubLevelTopKpis.costPerParcel?.toString() || '0'} icon={Package} accentColor="bg-emerald-600" />
+              <CompactStatCard title="Delivered Ado" value={hubLevelTopKpis.deliveredAdo?.toString() || '0'} icon={CheckCircle} accentColor="bg-maroon-500" />
+              <CompactStatCard title="Dispatched Ado" value={hubLevelTopKpis.dispatchedAdo?.toString() || '0'} icon={Zap} accentColor="bg-orange-500" />
+              <CompactStatCard title="Success Rate" value={`${hubLevelTopKpis.successRate || 0}%`} icon={CheckCircle} accentColor="bg-green-600" />
+              <CompactStatCard title="Delivered Prod" value={hubLevelTopKpis.deliveredProd?.toString() || '0'} icon={Package} accentColor="bg-cyan-600" />
+              <CompactStatCard title="Assigned Prod" value={hubLevelTopKpis.assignedProd?.toString() || '0'} icon={TrendingUp} accentColor="bg-blue-600" />
+              <CompactStatCard title="Fleet Count" value={hubLevelTopKpis.fleetCount?.toString() || '0'} icon={Users} accentColor="bg-purple-600" />
+            </div>
+          )
+        })()}
       </div>
       )}
 
@@ -3697,7 +3974,6 @@ const hubLevelGraphComparison = useMemo(() => {
                   onChange={(e) => setSelectedCategory(e.target.value)}
                   className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
                 >
-                  <option value="Total Delivered">Total Delivered</option>
                   <option value="Cost Per Parcel">Cost Per Parcel</option>
                   <option value="Delivered Ado">Delivered Ado</option>
                   <option value="Dispatched Ado">Dispatched Ado</option>
@@ -3757,6 +4033,7 @@ const hubLevelGraphComparison = useMemo(() => {
                         axisLine={false} 
                         width={50}
                         domain={chartDomain}
+                        ticks={yTicks}
                         isAnimationActive={true}
                         animationDuration={1200}
                       />
@@ -3781,7 +4058,7 @@ const hubLevelGraphComparison = useMemo(() => {
                         animationEasing="ease-in-out"
                         isAnimationActive={true}
                       >
-                        <LabelList dataKey={selectedCategory} position="top" fill="#f87171" fontSize={8} />
+                        <LabelList dataKey={selectedCategory} position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
                       </Area>
                       <Line
                         type="monotone"
@@ -3801,6 +4078,7 @@ const hubLevelGraphComparison = useMemo(() => {
                 <BarChart 
                   key={`bar-${selectedHub}-${hubDeliveryTrendRange}-${selectedCategory}`} 
                   data={filteredChartData}
+                  margin={{ top: filteredChartData[0]?.currentLabel ? 24 : 10, right: 20, left: 0, bottom: 10 }}
                   isAnimationActive={true}
                   animationDuration={1200}
                 >
@@ -3808,6 +4086,14 @@ const hubLevelGraphComparison = useMemo(() => {
                     <linearGradient id="colorBar" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#a83030" stopOpacity={0.8}/>
                       <stop offset="95%" stopColor="#a83030" stopOpacity={0.4}/>
+                    </linearGradient>
+                    <linearGradient id="colorLast7" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.95}/>
+                      <stop offset="95%" stopColor="#0284c7" stopOpacity={0.75}/>
+                    </linearGradient>
+                    <linearGradient id="colorPrior7" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.95}/>
+                      <stop offset="95%" stopColor="#dc2626" stopOpacity={0.75}/>
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
@@ -3835,6 +4121,7 @@ const hubLevelGraphComparison = useMemo(() => {
                     axisLine={false} 
                     width={40}
                     domain={chartDomain}
+                    ticks={yTicks}
                     isAnimationActive={true}
                     animationDuration={1200}
                   />
@@ -3848,16 +4135,51 @@ const hubLevelGraphComparison = useMemo(() => {
                       boxShadow: '0 0 20px rgba(0,0,0,0.5)'
                     }} 
                   />
-                  <Bar 
-                    dataKey={selectedCategory}
-                    fill="url(#colorBar)"
-                    animationDuration={1200}
-                    animationEasing="ease-in-out"
-                    isAnimationActive={true}
-                    radius={[4, 4, 0, 0]}
-                  >
-                    <LabelList dataKey={selectedCategory} position="top" fill="#f87171" fontSize={8} />
-                  </Bar>
+                  {filteredChartData[0]?.currentLabel && filteredChartData[0]?.priorLabel && (
+                    <Legend
+                      verticalAlign="top"
+                      align="center"
+                      iconType="square"
+                      wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                    />
+                  )}
+                  {filteredChartData[0]?.currentLabel && filteredChartData[0]?.priorLabel ? (
+                    <>
+                      <Bar 
+                        dataKey="currentPeriod"
+                        name={filteredChartData[0].currentLabel}
+                        fill="url(#colorLast7)"
+                        animationDuration={1200}
+                        animationEasing="ease-in-out"
+                        isAnimationActive={true}
+                        radius={[4, 4, 0, 0]}
+                      >
+                        <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={8} />
+                      </Bar>
+                      <Bar 
+                        dataKey="priorPeriod"
+                        name={filteredChartData[0].priorLabel}
+                        fill="url(#colorPrior7)"
+                        animationDuration={1200}
+                        animationEasing="ease-in-out"
+                        isAnimationActive={true}
+                        radius={[4, 4, 0, 0]}
+                      >
+                        <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
+                      </Bar>
+                    </>
+                  ) : (
+                    <Bar 
+                      dataKey={selectedCategory}
+                      fill="url(#colorBar)"
+                      animationDuration={1200}
+                      animationEasing="ease-in-out"
+                      isAnimationActive={true}
+                      radius={[4, 4, 0, 0]}
+                    >
+                      <LabelList dataKey={selectedCategory} position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
+                    </Bar>
+                  )}
                 </BarChart>
               )
             ) : (
@@ -3884,20 +4206,6 @@ const hubLevelGraphComparison = useMemo(() => {
                 <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
                 <h3 className="text-sm font-semibold text-white tracking-wide">Graph Comparison</h3>
               </div>
-              {/* Category Filter for Comparison */}
-              <select 
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
-              >
-                <option value="Success Rate">Success Rate</option>
-                <option value="Riders">Riders</option>
-                <option value="Delivered">Delivered</option>
-                <option value="On-Hold">On-Hold</option>
-                <option value="Productivity">Productivity</option>
-                <option value="Clear Floor Rate">Clear Floor Rate</option>
-                <option value="Scorecard">Scorecard</option>
-              </select>
             </div>
             <ResponsiveContainer width="100%" height={320}>
               {hubLevelGraphComparison.length > 0 ? (
@@ -3920,9 +4228,9 @@ const hubLevelGraphComparison = useMemo(() => {
                     fontSize={8} 
                     tickLine={false} 
                     axisLine={false}
-                    angle={-15}
-                    textAnchor="end"
-                    height={60}
+                    angle={0}
+                    textAnchor="middle"
+                    height={36}
                   />
                   <YAxis 
                     stroke="#94a3b8" 
@@ -3930,6 +4238,8 @@ const hubLevelGraphComparison = useMemo(() => {
                     tickLine={false} 
                     axisLine={false} 
                     width={50}
+                    domain={hubLevelGraphComparisonDomain}
+                    ticks={hubLevelYTicks}
                   />
                   <Tooltip 
                     contentStyle={{ 
@@ -3949,7 +4259,7 @@ const hubLevelGraphComparison = useMemo(() => {
                     isAnimationActive={true}
                     radius={[4, 4, 0, 0]}
                   >
-                    <LabelList dataKey={selectedCategory} position="top" fill="#f87171" fontSize={9} />
+                    <LabelList dataKey={selectedCategory} position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={9} />
                   </Bar>
                 </BarChart>
               ) : (
@@ -3961,6 +4271,110 @@ const hubLevelGraphComparison = useMemo(() => {
               )}
             </ResponsiveContainer>
           </div>
+        </div>
+
+        {/* Prior vs Last 7 Days - Daily Comparison */}
+        <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
+              <h3 className="text-sm font-semibold text-white tracking-wide">Last vs Prior 7 Days</h3>
+            </div>
+            <select 
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
+            >
+              <option value="Cost Per Parcel">Cost Per Parcel</option>
+              <option value="Delivered Ado">Delivered Ado</option>
+              <option value="Dispatched Ado">Dispatched Ado</option>
+              <option value="Success Rate">Success Rate</option>
+              <option value="Delivered Prod">Delivered Prod</option>
+              <option value="Assigned Prod">Assigned Prod</option>
+              <option value="Fleet Count">Fleet Count</option>
+            </select>
+          </div>
+          <ResponsiveContainer width="100%" height={300}>
+            {hubSevenDayComparisonData.length > 0 ? (
+              <BarChart
+                data={hubSevenDayComparisonData}
+                margin={{ top: 24, right: 24, left: 0, bottom: 10 }}
+                isAnimationActive={true}
+                animationDuration={1200}
+              >
+                <defs>
+                  <linearGradient id="colorCompareLast7" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.95}/>
+                    <stop offset="95%" stopColor="#0284c7" stopOpacity={0.75}/>
+                  </linearGradient>
+                  <linearGradient id="colorComparePrior7" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.95}/>
+                    <stop offset="95%" stopColor="#dc2626" stopOpacity={0.75}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                <XAxis 
+                  dataKey="month" 
+                  stroke="#94a3b8" 
+                  fontSize={9} 
+                  tickLine={false} 
+                  axisLine={false}
+                  interval={0}
+                />
+                <YAxis 
+                  stroke="#94a3b8" 
+                  fontSize={9} 
+                  tickLine={false} 
+                  axisLine={false} 
+                  width={45}
+                  domain={hubSevenDayComparisonDomain}
+                  ticks={hubYTicks}
+                />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: '#1e293b', 
+                    border: '1px solid #334155', 
+                    borderRadius: '6px',
+                    color: '#fff',
+                    fontSize: '11px',
+                    boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                  }} 
+                />
+                <Legend
+                  verticalAlign="top"
+                  align="center"
+                  iconType="square"
+                  wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                />
+                <Bar 
+                  dataKey="currentPeriod"
+                  name={hubSevenDayComparisonData[0]?.currentLabel || 'Last 7 Days'}
+                  fill="url(#colorCompareLast7)"
+                  animationDuration={1200}
+                  animationEasing="ease-in-out"
+                  isAnimationActive={true}
+                  radius={[4, 4, 0, 0]}
+                >
+                  <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={9} />
+                </Bar>
+                <Bar 
+                  dataKey="priorPeriod"
+                  name={hubSevenDayComparisonData[0]?.priorLabel || 'Prior 7 Days'}
+                  fill="url(#colorComparePrior7)"
+                  animationDuration={1200}
+                  animationEasing="ease-in-out"
+                  isAnimationActive={true}
+                  radius={[4, 4, 0, 0]}
+                >
+                  <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={9} />
+                </Bar>
+              </BarChart>
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <span className="text-slate-400 text-sm">Select a hub to compare prior and last 7 days</span>
+              </div>
+            )}
+          </ResponsiveContainer>
         </div>
 
         {/* KPI Distribution Section - Full Width Below */}
@@ -4343,9 +4757,9 @@ const hubLevelGraphComparison = useMemo(() => {
                       labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
                       formatter={(value) => {
                         if (riderTrendMetric === 'successRate') {
-                          return [`${value.toFixed(1)}%`, 'Success Rate']
+                          return [`${roundGraphValue(value)}%`, 'Success Rate']
                         }
-                        return [value, riderTrendMetric]
+                        return [roundGraphValue(value), riderTrendMetric]
                       }}
                     />
                     <Area 
@@ -4360,7 +4774,7 @@ const hubLevelGraphComparison = useMemo(() => {
                         dataKey="value" 
                         position="top" 
                         dy={-8}
-                        formatter={(value) => riderTrendMetric === 'successRate' ? `${value.toFixed(1)}%` : value}
+                        formatter={(value) => riderTrendMetric === 'successRate' ? `${roundGraphValue(value)}%` : roundGraphValue(value)}
                         fill="#ef4444" 
                         fontSize={10} 
                       />
@@ -4392,9 +4806,9 @@ const hubLevelGraphComparison = useMemo(() => {
                       labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
                       formatter={(value) => {
                         if (riderTrendMetric === 'successRate') {
-                          return [`${value.toFixed(1)}%`, 'Success Rate']
+                          return [`${roundGraphValue(value)}%`, 'Success Rate']
                         }
-                        return [value, riderTrendMetric]
+                        return [roundGraphValue(value), riderTrendMetric]
                       }}
                     />
                     <Bar 
@@ -4406,7 +4820,7 @@ const hubLevelGraphComparison = useMemo(() => {
                         dataKey="value" 
                         position="top" 
                         dy={-8}
-                        formatter={(value) => riderTrendMetric === 'successRate' ? `${value.toFixed(1)}%` : value}
+                        formatter={(value) => riderTrendMetric === 'successRate' ? `${roundGraphValue(value)}%` : roundGraphValue(value)}
                         fill="#ef4444" 
                         fontSize={10} 
                       />

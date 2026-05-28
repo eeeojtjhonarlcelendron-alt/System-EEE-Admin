@@ -228,7 +228,12 @@ function generateDerivedData() {
         delivered: 0,
         on_hold: 0,
         productivity: 0,
-        productivityCount: 0
+        productivityCount: 0,
+        cost_per_parcel: 0,
+        costPerParcelCount: 0,
+        delivered_ado: 0,
+        dispatched_ado: 0,
+        fleet_count: 0
       }
     }
 
@@ -239,6 +244,13 @@ function generateDerivedData() {
     dashboardMap[key].on_hold += Number(record.onhold) || 0
     dashboardMap[key].productivity += Number(record.assigned) || 0
     dashboardMap[key].productivityCount += 1
+    dashboardMap[key].cost_per_parcel += Number(record.cost_per_parcel) || 0
+    if (Number(record.cost_per_parcel) > 0) {
+      dashboardMap[key].costPerParcelCount += 1
+    }
+    dashboardMap[key].delivered_ado += Number(record.delivered_ado) || 0
+    dashboardMap[key].dispatched_ado += Number(record.dispatched_ado) || 0
+    dashboardMap[key].fleet_count += Number(record.fleet_count) || 0
   })
 
   cachedData.dashboard_metrics = Object.values(dashboardMap)
@@ -253,6 +265,10 @@ function generateDerivedData() {
         delivered: item.delivered,
         on_hold: item.on_hold,
         productivity: item.productivityCount > 0 ? item.productivity / item.productivityCount : 0,
+        cost_per_parcel: item.costPerParcelCount > 0 ? item.cost_per_parcel / item.costPerParcelCount : 0,
+        delivered_ado: item.delivered_ado,
+        dispatched_ado: item.dispatched_ado,
+        fleet_count: item.fleet_count,
         clear_floor_rate: kpi.cfrCount > 0 ? kpi.cfr / kpi.cfrCount : 0,
         scorecard: kpi.scoreCount > 0 ? kpi.score / kpi.scoreCount : 0,
         created_at: new Date().toISOString()
