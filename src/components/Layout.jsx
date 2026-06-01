@@ -24,13 +24,13 @@ function Layout({ onLogout }) {
     const path = location.pathname
     if (path === '/dashboard') return 'Dashboard'
     if (path.startsWith('/data-management/performance')) return 'Performance Management'
-    if (path.startsWith('/data-management/clustering')) return 'Clustering Management'
+    // Clustering page removed
     return 'Dashboard'
   }
   
   const pageTitle = getPageTitle()
 
-  const isDataManagementActive = ['/data-management/performance', '/data-management/clustering'].some(path => 
+  const isDataManagementActive = ['/data-management/performance'].some(path => 
     location.pathname.startsWith(path)
   )
 
@@ -142,22 +142,7 @@ function Layout({ onLogout }) {
                       Performance
                     </NavLink>
                   </li>
-                  <li>
-                    <NavLink
-                      to="/data-management/clustering"
-                      onClick={() => setSidebarOpen(false)}
-                      className={({ isActive }) =>
-                        `flex items-center text-xs gap-3 px-4 py-2 rounded-lg transition ${
-                          isActive
-                            ? 'bg-maroon-600/50 text-maroon-400 font-medium'
-                            : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                        }`
-                      }
-                    >
-                      <Network className="w-4 h-4" />
-                      Clustering
-                    </NavLink>
-                  </li>
+                  {/* Clustering removed */}
                 </ul>
               )}
             </li>

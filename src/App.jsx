@@ -5,7 +5,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Layout from './components/Layout'
 import Performance from './pages/Performance'
-import Clustering from './pages/Clustering'
+// Clustering page removed
 import { initializeDataService } from './lib/data'
 
 function AppRoutes() {
@@ -52,7 +52,7 @@ function AppRoutes() {
         <Route path="data-management/performance" element={<Performance />} />
         <Route path="data-management/kpi" element={<Navigate to="/dashboard" replace />} />
         <Route path="data-management/rider" element={<Navigate to="/dashboard" replace />} />
-        <Route path="data-management/clustering" element={<Clustering />} />
+        {/* Clustering route removed */}
       </Route>
     </Routes>
   )

@@ -50,31 +50,67 @@ function toRate(value) {
   return percent > 1 ? percent / 100 : percent
 }
 
+function formatLocalDate(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatUtcDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null
+  const year = date.getUTCFullYear()
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function parseDateValue(value) {
-  if (!value) return null
+  if (value === null || value === undefined || value === '') return null
 
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null
-    return value.toISOString().split('T')[0]
+    return formatLocalDate(value)
   }
 
   if (typeof value === 'number' && value > 30000 && value < 60000) {
     const excelEpoch = new Date(1900, 0, 1)
     const date = new Date(excelEpoch.getTime() + (value - 2) * 24 * 60 * 60 * 1000)
-    return Number.isNaN(date.getTime()) ? null : date.toISOString().split('T')[0]
+    return Number.isNaN(date.getTime()) ? null : formatLocalDate(date)
   }
 
-  const dateStr = String(value).trim()
+  let dateStr = String(value).trim()
   if (!dateStr) return null
-  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr.split('T')[0]
 
-  const slashMatch = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (slashMatch) {
-    return `${slashMatch[3]}-${slashMatch[1].padStart(2, '0')}-${slashMatch[2].padStart(2, '0')}`
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return dateStr
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(dateStr)) {
+    const parsed = new Date(dateStr)
+    return Number.isNaN(parsed.getTime()) ? null : formatLocalDate(parsed)
+  }
+
+  const normalized = dateStr.split(' ')[0].replace(/\//g, '-')
+  const isoMatch = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2].padStart(2, '0')}-${isoMatch[3].padStart(2, '0')}`
+  }
+
+  const mdyMatch = normalized.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
+  if (mdyMatch) {
+    return `${mdyMatch[3]}-${mdyMatch[1].padStart(2, '0')}-${mdyMatch[2].padStart(2, '0')}`
+  }
+
+  const dmyMatch = normalized.match(/^(\d{1,2})-(\d{1,2})-(\d{2})$/)
+  if (dmyMatch) {
+    const year = Number(dmyMatch[3])
+    const fullYear = year < 50 ? 2000 + year : 1900 + year
+    return `${fullYear}-${dmyMatch[1].padStart(2, '0')}-${dmyMatch[2].padStart(2, '0')}`
   }
 
   const parsed = new Date(dateStr)
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().split('T')[0]
+  return Number.isNaN(parsed.getTime()) ? null : formatLocalDate(parsed)
 }
 
 function getRowsFromPayload(rawData, keys, allowRootArray = true) {
@@ -143,6 +179,7 @@ function normalizePerformanceRecords(records) {
       date: parseDateValue(getField(record, ['date', 'Date', 'DATE'])),
       region: getField(record, ['region', 'Region', 'REGION']) || null,
       cluster: getField(record, ['cluster', 'Cluster', 'AREA CLUSTER', 'Area Cluster']) || null,
+      clustering: getField(record, ['clustering', 'Clustering', 'CLUSTERING']) || null,
       hub,
       driver_name: getField(record, ['driver_name', 'Driver Name', 'Rider Name', 'rider_name', 'HUB NAME']) || null,
       rider_id: String(getField(record, ['rider_id', 'Rider ID', 'Driver ID', 'driver_id']) || `RIDER_${index + 1}`).trim(),
@@ -176,7 +213,7 @@ function normalizeKpiRecords(records) {
       region: getField(record, ['region', 'Region', 'REGION']) || '',
       sub_region: getField(record, ['sub_region', 'Sub Region', 'Sub-Region']) || '',
       operator_hub: getField(record, ['operator_hub', 'Operator Hub', 'hub', 'Hub', 'HUB NAME']) || '',
-      cluster: getField(record, ['cluster', 'Cluster', 'AREA CLUSTER']) || '',
+      cluster: getField(record, ['cluster', 'Cluster', 'AREA CLUSTER', 'CLUSTERING', 'Clustering']) || '',
       score,
       grade: getField(record, ['grade', 'Grade']) || '',
       remarks: getField(record, ['remarks', 'Remarks']) || '',
@@ -508,7 +545,8 @@ export async function getPerformanceRecordsPaginated(page = 0, pageSize = 100, f
     filtered = filtered.filter(r =>
       String(r.hub || '').toLowerCase().includes(search) ||
       String(r.region || '').toLowerCase().includes(search) ||
-      String(r.cluster || '').toLowerCase().includes(search)
+      String(r.cluster || '').toLowerCase().includes(search) ||
+      String(r.clustering || '').toLowerCase().includes(search)
     )
   }
   const start = page * pageSize
@@ -687,15 +725,50 @@ export async function insertSinglePerformanceRecord(record) {
 }
 
 export async function createClusterLeader(record) {
-  return { data: null, error: { message: 'Read-only data source' } }
+  // Create a new cluster leader in the in-memory cache
+  try {
+    await ensureDataLoaded()
+    const id = (cachedData.cluster_leaders.length > 0 ? Math.max(...cachedData.cluster_leaders.map(r => Number(r.id) || 0)) : 0) + 1
+    const newRecord = {
+      id,
+      leader_name: record.leader_name || '',
+      hubs: Array.isArray(record.hubs) ? record.hubs : []
+    }
+    cachedData.cluster_leaders = [newRecord, ...cachedData.cluster_leaders]
+    return { data: newRecord, error: null }
+  } catch (err) {
+    return { data: null, error: err }
+  }
 }
 
 export async function updateClusterLeader(id, updates) {
-  return { data: null, error: { message: 'Read-only data source' } }
+  try {
+    await ensureDataLoaded()
+    const idx = cachedData.cluster_leaders.findIndex(r => String(r.id) === String(id))
+    if (idx === -1) return { data: null, error: { message: 'Not found' } }
+    const existing = cachedData.cluster_leaders[idx]
+    const updated = {
+      ...existing,
+      leader_name: updates.leader_name !== undefined ? updates.leader_name : existing.leader_name,
+      hubs: Array.isArray(updates.hubs) ? updates.hubs : existing.hubs
+    }
+    cachedData.cluster_leaders[idx] = updated
+    return { data: updated, error: null }
+  } catch (err) {
+    return { data: null, error: err }
+  }
 }
 
 export async function deleteClusterLeader(id) {
-  return { error: { message: 'Read-only data source' } }
+  try {
+    await ensureDataLoaded()
+    const idx = cachedData.cluster_leaders.findIndex(r => String(r.id) === String(id))
+    if (idx === -1) return { error: { message: 'Not found' } }
+    const removed = cachedData.cluster_leaders.splice(idx, 1)
+    return { error: null }
+  } catch (err) {
+    return { error: err }
+  }
 }
 
 export async function refreshRiders() {
@@ -709,11 +782,40 @@ export async function syncRidersFromPerformance() {
 }
 
 export async function syncClusterToKpiRecords(leaderName, hubs) {
-  return { error: null, count: 0 }
+  try {
+    await ensureDataLoaded()
+    if (!Array.isArray(hubs) || hubs.length === 0) return { error: null, count: 0 }
+    let count = 0
+    const hubSet = new Set(hubs.map(h => String(h)))
+    cachedData.kpi_records.forEach(k => {
+      if (hubSet.has(String(k.operator_hub))) {
+        k.cluster = leaderName
+        count++
+      }
+    })
+    // regenerate derived data that depends on kpi_records
+    generateDerivedData()
+    return { error: null, count }
+  } catch (err) {
+    return { error: err, count: 0 }
+  }
 }
 
 export async function clearClusterFromKpiRecords(hubs) {
-  return { error: null }
+  try {
+    await ensureDataLoaded()
+    if (!Array.isArray(hubs) || hubs.length === 0) return { error: null }
+    const hubSet = new Set(hubs.map(h => String(h)))
+    cachedData.kpi_records.forEach(k => {
+      if (hubSet.has(String(k.operator_hub))) {
+        k.cluster = ''
+      }
+    })
+    generateDerivedData()
+    return { error: null }
+  } catch (err) {
+    return { error: err }
+  }
 }
 
 export async function checkHubsInKpiRecords(hubs) {

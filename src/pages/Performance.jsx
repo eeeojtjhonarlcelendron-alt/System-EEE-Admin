@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, FileDown, Plus, Pencil, Trash2, Calendar, Building2, MapPin } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { getPerformanceRecords, getPerformanceRecordsPaginated, batchInsertPerformanceRecords, deleteAllPerformanceRecords, updatePerformanceRecord, getPerformanceRecordByRiderAndDate, getPerformanceRecordsByDateRange, refreshRiders, deletePerformanceRecord, insertSinglePerformanceRecord, getRiders, syncRidersFromPerformance } from '../lib/data'
+import { getPerformanceRecords, getPerformanceRecordsPaginated, batchInsertPerformanceRecords, deleteAllPerformanceRecords, updatePerformanceRecord, getPerformanceRecordByRiderAndDate, getPerformanceRecordsByDateRange, refreshRiders, deletePerformanceRecord, insertSinglePerformanceRecord, getRiders, syncRidersFromPerformance, reloadDataService } from '../lib/data'
 import { SkeletonPerformance } from '../components/Skeleton'
 
 const PERFORMANCE_SHEET_COLUMNS = [
   'DATE',
   'REGION',
   'AREA CLUSTER',
+  'CLUSTERING',
   'HUB NAME',
   'FLEET COUNT',
   'SUCCESS RATE',
@@ -41,6 +42,7 @@ const toSheetPerformanceRow = (row) => ({
   DATE: row.date || row.created_date || '',
   REGION: row.region || '',
   'AREA CLUSTER': row.cluster || '',
+  'CLUSTERING': row.clustering || '',
   'HUB NAME': row.hub || '',
   'FLEET COUNT': row.fleet_count || 0,
   'SUCCESS RATE': formatSheetSuccessRate(row.success_rate ?? row.pecentage),
@@ -51,40 +53,74 @@ const toSheetPerformanceRow = (row) => ({
   'DISPATCHED ADO': formatSheetNumber(row.dispatched_ado ?? 0)
 })
 
+function formatLocalDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatUtcDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null
+  const year = date.getUTCFullYear()
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseDateString(dateStr) {
+  if (!dateStr) return null
+  const trimmed = String(dateStr).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(trimmed)) {
+    const date = new Date(trimmed)
+    if (!isNaN(date.getTime())) {
+      return formatLocalDate(date)
+    }
+    return null
+  }
+  const normalized = trimmed.replace(/\//g, '-')
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) {
+    const [year, month, day] = normalized.split('-')
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
+  const mdyMatch = normalized.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
+  if (mdyMatch) {
+    return `${mdyMatch[3]}-${mdyMatch[1].padStart(2, '0')}-${mdyMatch[2].padStart(2, '0')}`
+  }
+  const dmyMatch = normalized.match(/^(\d{1,2})-(\d{1,2})-(\d{2})$/)
+  if (dmyMatch) {
+    const year = Number(dmyMatch[3])
+    const fullYear = year < 50 ? 2000 + year : 1900 + year
+    return `${fullYear}-${dmyMatch[1].padStart(2, '0')}-${dmyMatch[2].padStart(2, '0')}`
+  }
+  const date = new Date(trimmed)
+  if (!isNaN(date.getTime())) {
+    return formatLocalDate(date)
+  }
+  return null
+}
+
 function parseDate(dateValue) {
   if (!dateValue) return null
   
-  // Handle Date objects (from Excel parsing)
   if (dateValue instanceof Date) {
-    if (isNaN(dateValue.getTime())) return null
-    const year = dateValue.getFullYear()
-    const month = String(dateValue.getMonth() + 1).padStart(2, '0')
-    const day = String(dateValue.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
+    return formatLocalDate(dateValue)
   }
   
-  // Handle Excel serial date numbers (e.g., 46023)
   if (typeof dateValue === 'number' && dateValue > 30000 && dateValue < 60000) {
-    // Excel epoch is 1900-01-01 (with leap year bug)
     const excelEpoch = new Date(1900, 0, 1)
-    const daysOffset = dateValue - 2 // Adjust for Excel's leap year bug
+    const daysOffset = dateValue - 2
     const date = new Date(excelEpoch.getTime() + daysOffset * 24 * 60 * 60 * 1000)
-    if (!isNaN(date.getTime())) {
-      const year = date.getFullYear()
-      const month = String(date.getMonth() + 1).padStart(2, '0')
-      const day = String(date.getDate()).padStart(2, '0')
-      return `${year}-${month}-${day}`
-    }
+    return formatLocalDate(date)
   }
-  
-  // Convert to string if not already
+
   const dateStr = String(dateValue).trim()
   if (dateStr === '') return null
-  
-  // If already in YYYY-MM-DD format
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr
-  
-  // Parse M/D/YYYY or MM/DD/YYYY format (e.g., "1/1/2026")
   const slashMatch = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
   if (slashMatch) {
     const month = slashMatch[1].padStart(2, '0')
@@ -92,17 +128,7 @@ function parseDate(dateValue) {
     const year = slashMatch[3]
     return `${year}-${month}-${day}`
   }
-  
-  // Parse "Sep 29" or "Sep 29, 2024" format
-  const date = new Date(dateStr)
-  if (!isNaN(date.getTime())) {
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
-  }
-  
-  return null
+  return parseDateString(dateStr)
 }
 
 function Performance() {
@@ -165,6 +191,7 @@ function Performance() {
     try {
       if (isInitial) {
         setLoading(true)
+        await reloadDataService()
       } else {
         setIsFiltering(true)
       }
@@ -687,22 +714,7 @@ function Performance() {
           <h1 className="text-xl font-bold text-white">Performance Management</h1>
           <p className="text-slate-400 mt-0.5 text-xs">Manage and analyze rider performance data</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 font-medium text-xs shadow-sm hover:shadow-md hover:scale-105"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            Upload
-          </button>
-          <button
-            onClick={exportData}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 font-medium text-xs hover:shadow-md"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export
-          </button>
-        </div>
+        
       </div>
 
       {/* Search and Filter */}

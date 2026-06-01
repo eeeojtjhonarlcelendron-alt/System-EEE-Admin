@@ -525,6 +525,8 @@ function Dashboard() {
   const [selectedHub, setSelectedHub] = useState('')
   const [hubSearchTerm, setHubSearchTerm] = useState('')
   const [showHubDropdown, setShowHubDropdown] = useState(false)
+  const [clusterSearchTerm, setClusterSearchTerm] = useState('')
+  const [showClusterDropdown, setShowClusterDropdown] = useState(false)
   const [kpiMetricsByHub, setKpiMetricsByHub] = useState([])
   const [overallKpiMetrics, setOverallKpiMetrics] = useState({
     clearFloorRate: 0,
@@ -998,19 +1000,50 @@ function Dashboard() {
     )
   }, [uniqueHubs, hubSearchTerm])
 
+  // Create cluster leader to hub mapping for Overall view filtering
+  const clusterLeaderHubMap = useMemo(() => {
+    const map = {}
+    clusterLeaders.forEach(leader => {
+      if (leader.hubs && Array.isArray(leader.hubs)) {
+        map[leader.leader_name] = leader.hubs
+      }
+    })
+    return map
+  }, [clusterLeaders])
+
+  // Resolve assigned hubs for the currently selected cluster.
+  // Prefer hub assignments from `performanceRecords` (HUB NAME) and normalize values.
+  // Fall back to `clusterLeaderHubMap` only when performance records do not contain the cluster.
+  const assignedHubsForSelectedCluster = useMemo(() => {
+    if (!selectedCluster) return []
+    const clusterNorm = selectedCluster.trim().toLowerCase()
+
+    const derived = performanceRecords
+      .filter(r => {
+        const clusterValue = String(r.clustering || r.cluster || '').trim().toLowerCase()
+        return clusterValue === clusterNorm && r.hub
+      })
+      .map(r => String(r.hub).trim())
+
+    const uniqueDerived = [...new Set(derived)]
+    if (uniqueDerived.length > 0) return uniqueDerived.sort((a, b) => a.localeCompare(b))
+
+    const fromMap = clusterLeaderHubMap[selectedCluster] || []
+    return Array.isArray(fromMap) ? fromMap.slice().sort((a, b) => a.localeCompare(b)) : []
+  }, [selectedCluster, clusterLeaderHubMap, performanceRecords])
+
   const hubDropdownOptions = useMemo(() => {
+    // If a cluster is selected, limit hub dropdown to hubs assigned to that cluster leader
+    if (selectedCluster) {
+      const assigned = assignedHubsForSelectedCluster
+      const sorted = Array.isArray(assigned) ? assigned.slice().sort((a, b) => a.localeCompare(b)) : []
+      if (!hubSearchTerm || hubSearchTerm === selectedHub) return sorted
+      return sorted.filter(hub => hub.toLowerCase().includes(hubSearchTerm.toLowerCase()))
+    }
+
     if (!hubSearchTerm || hubSearchTerm === selectedHub) return uniqueHubs
     return filteredHubs
-  }, [filteredHubs, hubSearchTerm, selectedHub, uniqueHubs])
-
-  useEffect(() => {
-    if (dashboardView !== 'hub') return
-    if (selectedHub || uniqueHubs.length === 0) return
-
-    const defaultHub = uniqueHubs[0]
-    setSelectedHub(defaultHub)
-    setHubSearchTerm(defaultHub)
-  }, [dashboardView, selectedHub, uniqueHubs])
+  }, [filteredHubs, hubSearchTerm, selectedCluster, selectedHub, uniqueHubs, clusterLeaderHubMap])
 
   // Get unique riders for filter - from ridersData
   const uniqueRiders = useMemo(() => {
@@ -1127,10 +1160,17 @@ function Dashboard() {
     return [...new Set(kpiData.map(item => item.category).filter(Boolean))]
   }, [kpiData])
 
-  // Get unique clusters from KPI data
+  // Get unique clusters from Performance data CLUSTERING column only
   const uniqueClusters = useMemo(() => {
-    return [...new Set(kpiData.map(item => item.cluster).filter(Boolean))]
-  }, [kpiData])
+    const perfClusters = performanceRecords.map(item => item.clustering).filter(Boolean)
+    return [...new Set(perfClusters)].sort()
+  }, [performanceRecords])
+
+  const clusterDropdownOptions = useMemo(() => {
+    const search = String(clusterSearchTerm || '').trim().toLowerCase()
+    if (!search) return uniqueClusters
+    return uniqueClusters.filter(cluster => String(cluster || '').toLowerCase().includes(search))
+  }, [uniqueClusters, clusterSearchTerm])
 
   // Cluster leaders are now fetched in the background during main dashboard load
   
@@ -1150,19 +1190,6 @@ function Dashboard() {
     })
     return map
   }, [kpiData])
-
-  // Create cluster leader to hub mapping for Overall view filtering
-  const clusterLeaderHubMap = useMemo(() => {
-    const map = {}
-    clusterLeaders.forEach(leader => {
-      if (leader.hubs && Array.isArray(leader.hubs)) {
-        leader.hubs.forEach(hub => {
-          map[leader.leader_name] = leader.hubs
-        })
-      }
-    })
-    return map
-  }, [clusterLeaders])
 
   // Filtered stats based on hub/cluster and date selection - using dashboard_metrics
   // In Overall view with selectedCluster, shows all hubs in that cluster
@@ -1186,7 +1213,12 @@ function Dashboard() {
     const normalizeHub = value => String(value || '').trim().toLowerCase()
     const selectedHubNorm = normalizeHub(selectedHub)
 
-    const isHubRangeSelected = Boolean(hubFromDate || hubToDate || selectedDate || (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL'))
+    const isHubRangeSelected = Boolean(
+      hubFromDate && hubToDate ||
+      selectedDate ||
+      (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') ||
+      (hubCompareDateA && hubCompareDateB)
+    )
 
     // When a specific hub is selected in hub view and no explicit KPI date range is selected,
     // keep the legacy dashboard_metrics summary as a fallback.
@@ -1449,7 +1481,7 @@ function Dashboard() {
     // For overall view: process data from cluster leader assigned hubs
     if (dashboardView === 'overall' && selectedCluster) {
       const normalizeHub = (value) => String(value || '').trim().toLowerCase()
-      const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
+      const assignedHubs = assignedHubsForSelectedCluster
       const assignedHubSet = new Set(assignedHubs.map(normalizeHub))
 
       let filteredMetrics = dashboardMetrics.filter(m => assignedHubSet.has(normalizeHub(m.hub)))
@@ -1498,7 +1530,7 @@ function Dashboard() {
     
     // In Overall view with selectedCluster: filter hubs assigned to that cluster leader
     if (dashboardView === 'overall' && selectedCluster) {
-      const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
+      const assignedHubs = assignedHubsForSelectedCluster
       filtered = filtered.filter(item => assignedHubs.includes(item.hub))
     }
     
@@ -1575,7 +1607,7 @@ function Dashboard() {
     
     // In Overall view with selectedCluster: filter KPI data for hubs assigned to that cluster leader
     if (dashboardView === 'overall' && selectedCluster) {
-      const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
+      const assignedHubs = assignedHubsForSelectedCluster
       const assignedHubSet = new Set(assignedHubs.map(normalizeHub))
       filteredKpiData = filteredKpiData.filter(item => assignedHubSet.has(normalizeHub(item.operator_hub || item.hub)))
     }
@@ -1689,8 +1721,17 @@ const filteredChartData = useMemo(() => {
   const getDashboardMetricChartData = () => {
     console.log('getDashboardMetricChartData called with dashboardMetrics:', dashboardMetrics?.length || 0, 'rows')
     
-    if (dashboardView === 'hub' && (!selectedHub || selectedHub === 'All Hubs')) {
-      console.log('Hub view without selected hub: returning empty chart data')
+    // If in hub view and no hub filters (hub, from/to, range, compare, or date) are provided, return empty
+    const hubFiltersPresent = Boolean(
+      (selectedHub && selectedHub !== 'All Hubs') ||
+      hubFromDate || hubToDate ||
+      (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') ||
+      selectedDate ||
+      hubCompareDateA || hubCompareDateB
+    )
+
+    if (dashboardView === 'hub' && !hubFiltersPresent) {
+      console.log('Hub view without hub/date filters: returning empty chart data')
       return []
     }
 
@@ -1700,6 +1741,15 @@ const filteredChartData = useMemo(() => {
 
     console.log('Filtering with selectedHub:', selectedHub, 'normalized:', selectedHubNorm)
     console.log('Available hubs in dashboardMetrics:', [...new Set(dashboardMetrics.map(d => d.hub))])
+
+    // If a cluster is selected, filter to its assigned hubs
+    if (dashboardView === 'hub' && selectedCluster) {
+      const assigned = assignedHubsForSelectedCluster
+      const assignedNorm = new Set((assigned || []).map(a => String(a).trim().toLowerCase()))
+      filtered = filtered.filter(item => assignedNorm.has(String(item.hub || '').trim().toLowerCase()))
+      console.log('Filtered by cluster, remaining rows:', filtered.length)
+      if (filtered.length > 0) console.log('Sample filtered row:', filtered[0])
+    }
 
     if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
       filtered = filtered.filter(item => {
@@ -1853,15 +1903,21 @@ const filteredChartData = useMemo(() => {
   }
 
   if (dashboardView === 'hub') {
-    if (!selectedHub || selectedHub === 'All Hubs') {
-      return []
-    }
+    const hasHubFilters = Boolean(
+      selectedHub && selectedHub !== 'All Hubs' && (
+        (hubFromDate && hubToDate) ||
+        selectedDate ||
+        (hubCompareDateA && hubCompareDateB) ||
+        hubDeliveryTrendRange
+      )
+    )
+
+    if (!hasHubFilters) return []
+
     return getDashboardMetricChartData()
   }
-
-  // For overall view: process data from cluster leader assigned hubs with P7D/L7D logic
   if (dashboardView === 'overall' && selectedCluster) {
-    const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
+    const assignedHubs = assignedHubsForSelectedCluster
     const normalizeHub = (value) => String(value || '').trim().toLowerCase()
     const assignedHubSet = new Set(assignedHubs.map(normalizeHub))
 
@@ -2003,6 +2059,13 @@ const filteredChartData = useMemo(() => {
   return []
 }, [dashboardMetrics, selectedHub, selectedDate, dashboardView, selectedCluster, hubToClusterMap, hubFromDate, hubToDate, hubCompareDateA, hubCompareDateB, selectedCategory, hubDeliveryTrendRange])
 
+const filteredChartDataWithSelectedValue = useMemo(() => {
+  return filteredChartData.map(item => ({
+    ...item,
+    displayValue: Number(item[selectedCategory]) || 0
+  }))
+}, [filteredChartData, selectedCategory])
+
 const hubDeliveryTrendDateLabel = useMemo(() => {
   const formatDisplayDate = (dateStr) => {
     const date = new Date(dateStr)
@@ -2034,12 +2097,25 @@ const hubDeliveryTrendDateLabel = useMemo(() => {
   return 'All Dates'
 }, [hubFromDate, hubToDate, hubCompareDateA, hubCompareDateB, hubDeliveryTrendRange, filteredChartData])
 
+const deliveryTrendChartData = useMemo(() => {
+  return filteredChartData.map(item => ({
+    ...item,
+    selectedValue: Number(item[selectedCategory]) || 0
+  }))
+}, [filteredChartData, selectedCategory])
+
 const chartDomain = useMemo(() => {
-  if (!filteredChartData || filteredChartData.length === 0) {
+  if (!deliveryTrendChartData || deliveryTrendChartData.length === 0) {
     return [0, 'auto']
   }
 
-  const values = filteredChartData.map(item => Number(item[selectedCategory]) || 0)
+  const hasComparisonBars = deliveryTrendChartData[0]?.currentLabel && deliveryTrendChartData[0]?.priorLabel
+  const values = hasComparisonBars
+    ? deliveryTrendChartData.flatMap(item => [
+        Number(item.currentPeriod) || 0,
+        Number(item.priorPeriod) || 0
+      ])
+    : deliveryTrendChartData.map(item => Number(item.selectedValue) || 0)
   const maxValue = Math.max(...values, 0)
 
   // Percentage-like metrics should be capped at 100
@@ -2049,7 +2125,7 @@ const chartDomain = useMemo(() => {
   }
 
   return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
-}, [filteredChartData, selectedCategory])
+}, [deliveryTrendChartData, selectedCategory])
 
 // Compute explicit Y axis ticks when domain is capped at 100
 const yTicks = useMemo(() => {
@@ -2060,12 +2136,21 @@ const yTicks = useMemo(() => {
 }, [chartDomain])
 
 const hubSevenDayComparisonData = useMemo(() => {
-  if (dashboardView !== 'hub' || !selectedHub || selectedHub === 'All Hubs' || !dashboardMetrics?.length) {
+  const hasHubFilter = selectedCluster || (selectedHub && selectedHub !== 'All Hubs')
+  if (dashboardView !== 'hub' || !hasHubFilter || !dashboardMetrics?.length) {
     return []
   }
 
-  const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
-  const hubRows = dashboardMetrics.filter(item => String(item.hub || '').trim().toLowerCase() === selectedHubNorm)
+  let hubRows = []
+  if (selectedCluster) {
+    const assigned = assignedHubsForSelectedCluster
+    const assignedNorm = new Set((assigned || []).map(a => String(a).trim().toLowerCase()))
+    hubRows = dashboardMetrics.filter(item => assignedNorm.has(String(item.hub || '').trim().toLowerCase()))
+  } else {
+    const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
+    hubRows = dashboardMetrics.filter(item => String(item.hub || '').trim().toLowerCase() === selectedHubNorm)
+  }
+
   const latestDateString = getMaxDateString(hubRows.map(item => item.date?.split('T')[0] || item.date))
   if (!latestDateString) return []
 
@@ -2185,15 +2270,23 @@ const hubYTicks = useMemo(() => {
 
 // Calculate hub level period comparison data for Graph Comparison
 const hubLevelGraphComparison = useMemo(() => {
-  if (dashboardView !== 'hub' || !selectedHub || selectedHub === 'All Hubs' || !dashboardMetrics || dashboardMetrics.length === 0) {
+  const hasHubFilter = selectedCluster || (selectedHub && selectedHub !== 'All Hubs')
+  if (dashboardView !== 'hub' || !hasHubFilter || !dashboardMetrics || dashboardMetrics.length === 0) {
     return []
   }
 
-  const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
-  let hubData = dashboardMetrics.filter(item => {
-    const itemHubNorm = String(item.hub || '').trim().toLowerCase()
-    return itemHubNorm === selectedHubNorm
-  })
+  let hubData = []
+  if (selectedCluster) {
+    const assigned = assignedHubsForSelectedCluster
+    const assignedNorm = new Set((assigned || []).map(a => String(a).trim().toLowerCase()))
+    hubData = dashboardMetrics.filter(item => assignedNorm.has(String(item.hub || '').trim().toLowerCase()))
+  } else {
+    const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
+    hubData = dashboardMetrics.filter(item => {
+      const itemHubNorm = String(item.hub || '').trim().toLowerCase()
+      return itemHubNorm === selectedHubNorm
+    })
+  }
 
   if (hubData.length === 0) return []
 
@@ -2302,23 +2395,244 @@ const hubLevelGraphComparison = useMemo(() => {
   return result
 }, [dashboardMetrics, selectedHub, dashboardView])
 
+const hubLevelGraphComparisonChartData = useMemo(() => {
+  return hubLevelGraphComparison.map(item => ({
+    ...item,
+    selectedValue: Number(item[selectedCategory]) || 0
+  }))
+}, [hubLevelGraphComparison, selectedCategory])
+
 // Domain for the hub-level graph comparison (Graph Comparison chart)
 const hubLevelGraphComparisonDomain = useMemo(() => {
-  if (!hubLevelGraphComparison || hubLevelGraphComparison.length === 0) return [0, 'auto']
-  const values = hubLevelGraphComparison.flatMap(item => {
-    const v = Number(item[selectedCategory]) || 0
+  if (!hubLevelGraphComparisonChartData || hubLevelGraphComparisonChartData.length === 0) return [0, 'auto']
+  const values = hubLevelGraphComparisonChartData.flatMap(item => {
+    const v = Number(item.selectedValue) || 0
     return [v]
   })
   const maxValue = Math.max(...values, 0)
   if (['Success Rate', 'Assigned Prod'].includes(selectedCategory)) return [0, 100]
   return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
-}, [hubLevelGraphComparison, selectedCategory])
+}, [hubLevelGraphComparisonChartData, selectedCategory])
 
 const hubLevelYTicks = useMemo(() => {
   if (!hubLevelGraphComparisonDomain || hubLevelGraphComparisonDomain.length !== 2) return undefined
   if (hubLevelGraphComparisonDomain[1] === 100) return [0,20,40,60,80,100]
   return undefined
 }, [hubLevelGraphComparisonDomain])
+
+const getHubSevenDayComparisonDataForHub = useCallback((hubName) => {
+  if (!hubName || !dashboardMetrics?.length) return []
+  const normalizeHub = (value) => String(value || '').trim().toLowerCase()
+  const hubNorm = normalizeHub(hubName)
+
+  const hubRows = dashboardMetrics.filter(item => normalizeHub(item.hub) === hubNorm)
+  const latestDateString = getMaxDateString(hubRows.map(item => item.date?.split('T')[0] || item.date))
+  if (!latestDateString) return []
+
+  const lastRange = getRangeBounds('L7D', latestDateString)
+  const priorRange = getRangeBounds('P7D', latestDateString)
+
+  const aggregateMetricRows = (rows) => {
+    const aggregated = {}
+
+    rows.forEach(item => {
+      const date = item.date?.split('T')[0] || item.date
+      if (!date) return
+
+      if (!aggregated[date]) {
+        aggregated[date] = {
+          date,
+          count: 0,
+          delivered: 0,
+          riders: 0,
+          on_hold: 0,
+          success_rate: 0,
+          productivity: 0,
+          cost_per_parcel: 0,
+          cost_per_parcel_count: 0,
+          delivered_ado: 0,
+          dispatched_ado: 0,
+          fleet_count: 0,
+          clear_floor_rate: 0,
+          scorecard: 0
+        }
+      }
+
+      const entry = aggregated[date]
+      entry.delivered += Number(item.delivered) || 0
+      entry.riders += Number(item.riders) || 0
+      entry.on_hold += Number(item.on_hold) || 0
+      entry.success_rate += Number(item.success_rate) || 0
+      entry.productivity += Number(item.productivity) || 0
+      entry.cost_per_parcel += Number(item.cost_per_parcel) || 0
+      if (Number(item.cost_per_parcel) > 0) {
+        entry.cost_per_parcel_count += 1
+      }
+      entry.delivered_ado += Number(item.delivered_ado) || 0
+      entry.dispatched_ado += Number(item.dispatched_ado) || 0
+      entry.fleet_count += Number(item.fleet_count) || 0
+      entry.clear_floor_rate += Number(item.clear_floor_rate) || 0
+      entry.scorecard += Number(item.scorecard) || 0
+      entry.count += 1
+    })
+
+    return Object.values(aggregated).sort((a, b) => a.date.localeCompare(b.date))
+  }
+
+  const mapMetricRow = (item) => ({
+    month: parseDateString(item.date)?.toLocaleDateString('en-US', { weekday: 'short' }) || item.date,
+    values: {
+      'Success Rate': item.count > 0 ? roundGraphValue((item.success_rate / item.count) * 100) : 0,
+      'Riders': roundGraphValue(item.riders),
+      'Total Delivered': roundGraphValue(item.delivered),
+      'Cost Per Parcel': item.cost_per_parcel_count > 0 ? roundGraphValue(item.cost_per_parcel / item.cost_per_parcel_count) : 0,
+      'Delivered Ado': roundGraphValue(item.delivered_ado),
+      'Dispatched Ado': roundGraphValue(item.dispatched_ado),
+      'Delivered': roundGraphValue(item.delivered),
+      'Delivered Prod': roundGraphValue(item.delivered),
+      'On-Hold': roundGraphValue(item.on_hold),
+      'Productivity': item.count > 0 ? roundGraphValue(item.productivity / item.count) : 0,
+      'Assigned Prod': item.count > 0 ? roundGraphValue(item.productivity / item.count) : 0,
+      'Fleet Count': roundGraphValue(item.fleet_count),
+      'Clear Floor Rate': item.count > 0 ? roundGraphValue(item.clear_floor_rate / item.count) : 0,
+      'Scorecard': item.count > 0 ? roundGraphValue(item.scorecard / item.count) : 0
+    },
+    currentLabel: formatShortRangeLabel(lastRange.start, lastRange.end),
+    priorLabel: formatShortRangeLabel(priorRange.start, priorRange.end)
+  })
+
+  const lastAggregated = aggregateMetricRows(hubRows.filter(item => {
+    const itemDate = item.date?.split('T')[0] || item.date
+    return itemDate >= lastRange.start && itemDate <= lastRange.end
+  }))
+
+  const priorAggregated = aggregateMetricRows(hubRows.filter(item => {
+    const itemDate = item.date?.split('T')[0] || item.date
+    return itemDate >= priorRange.start && itemDate <= priorRange.end
+  }))
+
+  const priorByIndex = new Map(priorAggregated.map((item, index) => [index, mapMetricRow(item)]))
+
+  return lastAggregated.map((item, index) => {
+    const current = mapMetricRow(item)
+    const prior = priorByIndex.get(index) || { values: {} }
+    return {
+      month: current.month,
+      currentPeriod: current.values[selectedCategory] || 0,
+      priorPeriod: prior.values[selectedCategory] || 0,
+      currentLabel: current.currentLabel,
+      priorLabel: current.priorLabel
+    }
+  })
+}, [dashboardMetrics, selectedCategory])
+
+const getHubLevelGraphComparisonForHub = useCallback((hubName) => {
+  if (!hubName || !dashboardMetrics?.length) return []
+  const normalizeHub = (value) => String(value || '').trim().toLowerCase()
+  const hubNorm = normalizeHub(hubName)
+
+  const hubData = dashboardMetrics.filter(item => normalizeHub(item.hub) === hubNorm)
+  if (!hubData.length) return []
+
+  const dates = hubData.map(item => String(item.date || '').split('T')[0]).filter(Boolean)
+  if (!dates.length) return []
+
+  const latestDate = new Date(dates.reduce((latest, current) => current > latest ? current : latest, dates[0]))
+  const l7dStart = new Date(latestDate)
+  l7dStart.setDate(latestDate.getDate() - 6)
+  const l7dEnd = new Date(latestDate)
+
+  const p7dEnd = new Date(l7dStart)
+  p7dEnd.setDate(p7dEnd.getDate() - 1)
+  const p7dStart = new Date(p7dEnd)
+  p7dStart.setDate(p7dEnd.getDate() - 6)
+
+  const mtdStart = new Date(latestDate.getFullYear(), latestDate.getMonth(), 1)
+
+  const formatLocalDate = (date) => {
+    const pad = (value) => String(value).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  }
+
+  const calculatePeriodAvg = (startDate, endDate) => {
+    const filtered = hubData.filter(item => {
+      const itemDate = String(item.date || '').split('T')[0]
+      return itemDate >= startDate && itemDate <= endDate
+    })
+
+    if (!filtered.length) return null
+
+    const totals = {
+      success_rate: 0,
+      riders: 0,
+      delivered: 0,
+      on_hold: 0,
+      productivity: 0,
+      cost_per_parcel: 0,
+      cost_per_parcel_count: 0,
+      delivered_ado: 0,
+      dispatched_ado: 0,
+      fleet_count: 0,
+      clear_floor_rate: 0,
+      scorecard: 0,
+      count: 0
+    }
+
+    filtered.forEach(item => {
+      totals.success_rate += Number(item.success_rate) || 0
+      totals.riders += Number(item.riders) || 0
+      totals.delivered += Number(item.delivered) || 0
+      totals.on_hold += Number(item.on_hold) || 0
+      totals.productivity += Number(item.productivity) || 0
+      totals.cost_per_parcel += Number(item.cost_per_parcel) || 0
+      if (Number(item.cost_per_parcel) > 0) totals.cost_per_parcel_count += 1
+      totals.delivered_ado += Number(item.delivered_ado) || 0
+      totals.dispatched_ado += Number(item.dispatched_ado) || 0
+      totals.fleet_count += Number(item.fleet_count) || 0
+      totals.clear_floor_rate += Number(item.clear_floor_rate) || 0
+      totals.scorecard += Number(item.scorecard) || 0
+      totals.count += 1
+    })
+
+    return {
+      period: '',
+      'Success Rate': totals.count > 0 ? roundGraphValue((totals.success_rate / totals.count) * 100) : 0,
+      'Riders': roundGraphValue(totals.riders),
+      'Total Delivered': roundGraphValue(totals.delivered),
+      'Cost Per Parcel': totals.cost_per_parcel_count > 0 ? roundGraphValue(totals.cost_per_parcel / totals.cost_per_parcel_count) : 0,
+      'Delivered Ado': roundGraphValue(totals.delivered_ado),
+      'Dispatched Ado': roundGraphValue(totals.dispatched_ado),
+      'Delivered': roundGraphValue(totals.delivered),
+      'Delivered Prod': totals.count > 0 ? roundGraphValue(totals.delivered / totals.count) : 0,
+      'On-Hold': roundGraphValue(totals.on_hold),
+      'Productivity': totals.count > 0 ? roundGraphValue(totals.productivity / totals.count) : 0,
+      'Assigned Prod': totals.count > 0 ? roundGraphValue(totals.productivity / totals.count) : 0,
+      'Fleet Count': totals.count > 0 ? roundGraphValue(totals.fleet_count / totals.count) : 0,
+      'Clear Floor Rate': totals.count > 0 ? roundGraphValue(totals.clear_floor_rate / totals.count) : 0,
+      'Scorecard': totals.count > 0 ? roundGraphValue(totals.scorecard / totals.count) : 0
+    }
+  }
+
+  const l7dAvg = calculatePeriodAvg(formatLocalDate(l7dStart), formatLocalDate(l7dEnd))
+  const p7dAvg = calculatePeriodAvg(formatLocalDate(p7dStart), formatLocalDate(p7dEnd))
+  const mtdAvg = calculatePeriodAvg(formatLocalDate(mtdStart), formatLocalDate(latestDate))
+
+  const result = []
+  if (l7dAvg) result.push({ period: 'Last 7 Days', selectedValue: l7dAvg[selectedCategory] || 0, ...l7dAvg })
+  if (p7dAvg) result.push({ period: 'Prior 7 Days', selectedValue: p7dAvg[selectedCategory] || 0, ...p7dAvg })
+  if (mtdAvg) result.push({ period: 'Month to Date', selectedValue: mtdAvg[selectedCategory] || 0, ...mtdAvg })
+
+  return result
+}, [dashboardMetrics, selectedCategory])
+
+const clusterHubSections = useMemo(() => {
+  if (dashboardView !== 'hub' || !selectedCluster) return []
+  return assignedHubsForSelectedCluster.map(hub => ({
+    hub,
+    sevenDayData: getHubSevenDayComparisonDataForHub(hub),
+    graphData: getHubLevelGraphComparisonForHub(hub)
+  }))
+}, [dashboardView, selectedCluster, assignedHubsForSelectedCluster, getHubSevenDayComparisonDataForHub, getHubLevelGraphComparisonForHub])
 
   // Close hub dropdown when clicking outside
   useEffect(() => {
@@ -2333,6 +2647,18 @@ const hubLevelYTicks = useMemo(() => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [showHubDropdown])
+
+  // Close cluster dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showClusterDropdown && !event.target.closest('.cluster-search-container')) {
+        setShowClusterDropdown(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showClusterDropdown])
 
   // Close rider dropdown when clicking outside
   useEffect(() => {
@@ -2472,7 +2798,7 @@ const hubLevelYTicks = useMemo(() => {
         return []
       }
 
-      const assignedHubs = clusterLeaderHubMap[selectedCluster] || []
+      const assignedHubs = assignedHubsForSelectedCluster
       if (assignedHubs.length === 0) {
         return []
       }
@@ -3675,16 +4001,59 @@ const hubLevelYTicks = useMemo(() => {
               <option value="MTD">Month to Date</option>
             </select>
           </div>
+
+          {/* Cluster Filter (searchable) */}
+          <div className="relative cluster-search-container">
+            <input
+              type="text"
+              placeholder="Search cluster..."
+              value={clusterSearchTerm || selectedCluster}
+              onChange={(e) => {
+                const value = e.target.value
+                setClusterSearchTerm(value)
+                if (value === '') {
+                  setSelectedCluster('')
+                }
+                setShowClusterDropdown(true)
+              }}
+              onFocus={() => setShowClusterDropdown(true)}
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-2 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
+            />
+            {showClusterDropdown && (
+              <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
+                <div
+                  onClick={() => {
+                    setSelectedCluster('')
+                    setClusterSearchTerm('')
+                    setShowClusterDropdown(false)
+                  }}
+                  className="px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
+                >
+                  All Clusters
+                </div>
+                {clusterDropdownOptions.length > 0 ? (
+                  clusterDropdownOptions.map(cluster => (
+                    <div
+                      key={cluster}
+                      onClick={() => {
+                        setSelectedCluster(cluster)
+                        setClusterSearchTerm(cluster)
+                        setShowClusterDropdown(false)
+                      }}
+                      className="px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
+                    >
+                      {cluster}
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-2 py-1 text-[11px] text-[hsl(220,8%,55%)]">No clusters found</div>
+                )}
+              </div>
+            )}
+          </div>
           
           {/* Refresh Button */}
-          <button
-            onClick={handleRefreshMetrics}
-            disabled={isRefreshing}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(142,76%,36%)] hover:bg-[hsl(142,76%,42%)] disabled:bg-[hsl(142,76%,25%)] text-white rounded-[6px] text-[11px] font-medium transition-all duration-180 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] disabled:cursor-not-allowed"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-            {isRefreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
+          
           
                   </div>
       </div>
@@ -3776,14 +4145,7 @@ const hubLevelYTicks = useMemo(() => {
           </div>
           
           {/* Refresh Button */}
-          <button
-            onClick={handleRefreshMetrics}
-            disabled={isRefreshing}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(142,76%,36%)] hover:bg-[hsl(142,76%,42%)] disabled:bg-[hsl(142,76%,25%)] text-white rounded-[6px] text-[11px] font-medium transition-all duration-180 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] disabled:cursor-not-allowed"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-            {isRefreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
+          
           
           </div>
       </div>
@@ -3799,28 +4161,59 @@ const hubLevelYTicks = useMemo(() => {
           </div>
           
           {/* Cluster Filter */}
-          <select
-            value={selectedCluster}
-            onChange={(e) => setSelectedCluster(e.target.value)}
-            className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
-          >
-            <option value="">All Clusters</option>
-            {clusterLeaders.map(leader => (
-              <option key={leader.id} value={leader.leader_name}>{leader.leader_name}</option>
-            ))}
-          </select>
+          <div className="relative cluster-search-container">
+            <input
+              type="text"
+              placeholder="Search cluster..."
+              value={clusterSearchTerm || selectedCluster}
+              onChange={(e) => {
+                const value = e.target.value
+                setClusterSearchTerm(value)
+                if (value === '') {
+                  setSelectedCluster('')
+                }
+                setShowClusterDropdown(true)
+              }}
+              onFocus={() => setShowClusterDropdown(true)}
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-2 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64 pl-16"
+            />
+            {showClusterDropdown && (
+              <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
+                <div
+                  onClick={() => {
+                    setSelectedCluster('')
+                    setClusterSearchTerm('')
+                    setShowClusterDropdown(false)
+                  }}
+                  className="px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
+                >
+                  All Clusters
+                </div>
+                {clusterDropdownOptions.length > 0 ? (
+                  clusterDropdownOptions.map(cluster => (
+                    <div
+                      key={cluster}
+                      onClick={() => {
+                        setSelectedCluster(cluster)
+                        setClusterSearchTerm(cluster)
+                        setShowClusterDropdown(false)
+                      }}
+                      className="px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
+                    >
+                      {cluster}
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-2 py-1 text-[11px] text-[hsl(220,8%,55%)]">No clusters found</div>
+                )}
+              </div>
+            )}
+          </div>
 
           
           
           {/* Refresh Button */}
-          <button
-            onClick={handleRefreshMetrics}
-            disabled={isRefreshing}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(142,76%,36%)] hover:bg-[hsl(142,76%,42%)] disabled:bg-[hsl(142,76%,25%)] text-white rounded-[6px] text-[11px] font-medium transition-all duration-180 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] disabled:cursor-not-allowed"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-            {isRefreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
+          
           
         </div>
       </div>
@@ -3873,6 +4266,33 @@ const hubLevelYTicks = useMemo(() => {
                 const d = k.date?.split('T')[0] || k.date
                 return d === selectedDate
               })
+            } else if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
+              const metricRange = getHubMetricDateRange({
+                selectedHub,
+                hubFromDate,
+                hubToDate,
+                selectedDate,
+                hubDeliveryTrendRange
+              })
+
+              if (metricRange && metricRange.start && metricRange.end) {
+                perf = perf.filter(p => {
+                  const d = p.date?.split('T')[0] || p.date
+                  return d >= metricRange.start && d <= metricRange.end
+                })
+                metrics = metrics.filter(m => {
+                  const d = m.date?.split('T')[0] || m.date
+                  return d >= metricRange.start && d <= metricRange.end
+                })
+                kpi = kpi.filter(k => {
+                  const d = k.date?.split('T')[0] || k.date
+                  return d >= metricRange.start && d <= metricRange.end
+                })
+              } else {
+                perf = []
+                metrics = []
+                kpi = []
+              }
             }
 
             let costSum = 0, costCount = 0
@@ -3933,10 +4353,10 @@ const hubLevelYTicks = useMemo(() => {
       {/* Charts Row - Horizontal Layout - Hub Level Only */}
       {dashboardView === 'hub' && (
       <div className="space-y-4">
-        {/* Top Row: Delivery Trend and Graph Comparison */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Top Row: Delivery Trend Only */}
+        <div>
           {/* Delivery Performance - Area/Bar Chart */}
-          <div className="lg:col-span-2 relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+          <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
@@ -3996,8 +4416,7 @@ const hubLevelYTicks = useMemo(() => {
                   })
                   return (
                     <AreaChart 
-                      key={`area-${selectedHub}-${hubDeliveryTrendRange}-${selectedCategory}`}
-                      data={filteredChartData}
+                      data={filteredChartDataWithSelectedValue}
                       margin={{ top: 10, right: 30, left: 0, bottom: 50 }}
                       isAnimationActive={true}
                       animationDuration={1200}
@@ -4015,15 +4434,15 @@ const hubLevelYTicks = useMemo(() => {
                         fontSize={8} 
                         tickLine={false} 
                         axisLine={false}
-                        angle={0}
-                        textAnchor="middle"
                         interval={0}
-                        height={60}
+                        angle={filteredChartDataWithSelectedValue?.length > 15 ? -90 : 0}
+                        textAnchor={filteredChartDataWithSelectedValue?.length > 15 ? 'end' : 'middle'}
+                        height={filteredChartDataWithSelectedValue?.length > 15 ? 80 : 40}
                         tickFormatter={(value) => {
                           const date = new Date(value)
                           return Number.isNaN(date.getTime())
                             ? value
-                            : date.toLocaleDateString('en-US', { weekday: 'long' })
+                            : date.toLocaleDateString('en-US')
                         }}
                       />
                       <YAxis 
@@ -4049,7 +4468,7 @@ const hubLevelYTicks = useMemo(() => {
                       />
                       <Area 
                         type="monotone" 
-                        dataKey={selectedCategory}
+                        dataKey="displayValue"
                         stroke="#a83030" 
                         strokeWidth={2}
                         fillOpacity={0.3} 
@@ -4058,11 +4477,11 @@ const hubLevelYTicks = useMemo(() => {
                         animationEasing="ease-in-out"
                         isAnimationActive={true}
                       >
-                        <LabelList dataKey={selectedCategory} position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
+                        <LabelList dataKey="displayValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
                       </Area>
                       <Line
                         type="monotone"
-                        dataKey={selectedCategory}
+                        dataKey="displayValue"
                         stroke="#f87171"
                         strokeWidth={2}
                         dot={false}
@@ -4076,8 +4495,7 @@ const hubLevelYTicks = useMemo(() => {
                 })()
               ) : (
                 <BarChart 
-                  key={`bar-${selectedHub}-${hubDeliveryTrendRange}-${selectedCategory}`} 
-                  data={filteredChartData}
+                  data={filteredChartDataWithSelectedValue}
                   margin={{ top: filteredChartData[0]?.currentLabel ? 24 : 10, right: 20, left: 0, bottom: 10 }}
                   isAnimationActive={true}
                   animationDuration={1200}
@@ -4104,14 +4522,14 @@ const hubLevelYTicks = useMemo(() => {
                     tickLine={false} 
                     axisLine={false}
                     interval={0}
-                    angle={0}
-                    textAnchor="middle"
-                    height={40}
+                    angle={filteredChartDataWithSelectedValue?.length > 15 ? -90 : 0}
+                    textAnchor={filteredChartDataWithSelectedValue?.length > 15 ? 'end' : 'middle'}
+                    height={filteredChartDataWithSelectedValue?.length > 15 ? 80 : 40}
                     tickFormatter={(value) => {
                       const date = new Date(value)
                       return Number.isNaN(date.getTime())
                         ? value
-                        : date.toLocaleDateString('en-US', { weekday: 'long' })
+                        : date.toLocaleDateString('en-US')
                     }}
                   />
                   <YAxis 
@@ -4170,14 +4588,14 @@ const hubLevelYTicks = useMemo(() => {
                     </>
                   ) : (
                     <Bar 
-                      dataKey={selectedCategory}
+                      dataKey="displayValue"
                       fill="url(#colorBar)"
                       animationDuration={1200}
                       animationEasing="ease-in-out"
                       isAnimationActive={true}
                       radius={[4, 4, 0, 0]}
                     >
-                      <LabelList dataKey={selectedCategory} position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
+                      <LabelList dataKey="displayValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
                     </Bar>
                   )}
                 </BarChart>
@@ -4185,7 +4603,7 @@ const hubLevelYTicks = useMemo(() => {
             ) : (
               <div className="flex items-center justify-center h-full">
                 <span className="text-slate-400 text-sm">
-                  {dashboardView === 'hub' ? 'Select hub and date to view trend' : 'Select region and date to view trend'}
+                  {selectedCluster ? 'Delivery Trend is disabled while a cluster is selected' : 'Select a hub or date range to view trend'}
                 </span>
               </div>
             )}
@@ -4199,183 +4617,396 @@ const hubLevelYTicks = useMemo(() => {
             )}
           </div>
 
-          {/* Graph Comparison - Period Comparison Bar Chart */}
-          <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
-                <h3 className="text-sm font-semibold text-white tracking-wide">Graph Comparison</h3>
-              </div>
-            </div>
-            <ResponsiveContainer width="100%" height={320}>
-              {hubLevelGraphComparison.length > 0 ? (
-                <BarChart
-                  data={hubLevelGraphComparison}
-                  margin={{ top: 10, right: 30, left: 0, bottom: 30 }}
-                  isAnimationActive={true}
-                  animationDuration={1200}
-                >
-                  <defs>
-                    <linearGradient id="colorCompare" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#a83030" stopOpacity={0.8}/>
-                      <stop offset="95%" stopColor="#a83030" stopOpacity={0.4}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
-                  <XAxis 
-                    dataKey="period" 
-                    stroke="#94a3b8" 
-                    fontSize={8} 
-                    tickLine={false} 
-                    axisLine={false}
-                    angle={0}
-                    textAnchor="middle"
-                    height={36}
-                  />
-                  <YAxis 
-                    stroke="#94a3b8" 
-                    fontSize={9} 
-                    tickLine={false} 
-                    axisLine={false} 
-                    width={50}
-                    domain={hubLevelGraphComparisonDomain}
-                    ticks={hubLevelYTicks}
-                  />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#1e293b', 
-                      border: '1px solid #334155', 
-                      borderRadius: '6px',
-                      color: '#fff',
-                      fontSize: '11px',
-                      boxShadow: '0 0 20px rgba(0,0,0,0.5)'
-                    }} 
-                  />
-                  <Bar 
-                    dataKey={selectedCategory}
-                    fill="url(#colorCompare)"
-                    animationDuration={1200}
-                    animationEasing="ease-in-out"
-                    isAnimationActive={true}
-                    radius={[4, 4, 0, 0]}
-                  >
-                    <LabelList dataKey={selectedCategory} position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={9} />
-                  </Bar>
-                </BarChart>
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <span className="text-slate-400 text-sm">
-                    Select hub and date to view comparison
-                  </span>
-                </div>
-              )}
-            </ResponsiveContainer>
-          </div>
+          
         </div>
 
-        {/* Prior vs Last 7 Days - Daily Comparison */}
-        <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
-              <h3 className="text-sm font-semibold text-white tracking-wide">Last vs Prior 7 Days</h3>
+        {selectedCluster ? (
+          clusterHubSections.length > 0 ? (
+            <div className="space-y-8">
+              {clusterHubSections.map(({ hub, sevenDayData, graphData }) => {
+                const graphValues = graphData.flatMap(item => Number(item.selectedValue) || 0)
+                const graphMax = graphValues.length > 0 ? Math.max(...graphValues) : 0
+                const graphDomain = ['Success Rate', 'Assigned Prod'].includes(selectedCategory)
+                  ? [0, 100]
+                  : [0, Math.max(10, Math.ceil(graphMax * 1.2))]
+                const graphTicks = graphDomain[1] === 100 ? [0, 20, 40, 60, 80, 100] : undefined
+                const safeHubId = String(hub || '')
+                  .trim()
+                  .toLowerCase()
+                  .replace(/\s+/g, '-')
+                  .replace(/[^a-z0-9_-]/g, '')
+
+                return (
+                  <div key={hub} className="space-y-4">
+                    <div className="text-sm font-semibold text-white">Hub: {hub}</div>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      <div className="lg:col-span-2 relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
+                            <h3 className="text-sm font-semibold text-white tracking-wide">Last vs Prior 7 Days</h3>
+                          </div>
+                        </div>
+                        <ResponsiveContainer width="100%" height={380}>
+                          {sevenDayData.length > 0 ? (
+                            <BarChart
+                              data={sevenDayData}
+                              margin={{ top: 24, right: 24, left: 0, bottom: 30 }}
+                              isAnimationActive={true}
+                              animationDuration={1200}
+                            >
+                              <defs>
+                                <linearGradient id={`colorCompareLast7-${safeHubId}`} x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.95}/>
+                                  <stop offset="95%" stopColor="#0284c7" stopOpacity={0.75}/>
+                                </linearGradient>
+                                <linearGradient id={`colorComparePrior7-${safeHubId}`} x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.95}/>
+                                  <stop offset="95%" stopColor="#dc2626" stopOpacity={0.75}/>
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                              <XAxis
+                                dataKey="month"
+                                stroke="#94a3b8"
+                                fontSize={9}
+                                tickLine={false}
+                                axisLine={false}
+                                interval={0}
+                                height={54}
+                              />
+                              <YAxis
+                                stroke="#94a3b8"
+                                fontSize={9}
+                                tickLine={false}
+                                axisLine={false}
+                                width={45}
+                                domain={[0, 'auto']}
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: '#1e293b',
+                                  border: '1px solid #334155',
+                                  borderRadius: '6px',
+                                  color: '#fff',
+                                  fontSize: '11px',
+                                  boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                                }}
+                              />
+                              <Legend
+                                verticalAlign="top"
+                                align="center"
+                                iconType="square"
+                                wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                              />
+                              <Legend
+                                verticalAlign="top"
+                                align="center"
+                                iconType="square"
+                                wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                              />
+                              <Bar
+                                dataKey="currentPeriod"
+                                name={sevenDayData[0]?.currentLabel || 'Last 7 Days'}
+                                fill={`url(#colorCompareLast7-${safeHubId})`}
+                                animationDuration={1200}
+                                animationEasing="ease-in-out"
+                                isAnimationActive={true}
+                                radius={[4, 4, 0, 0]}
+                              >
+                                <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={9} />
+                              </Bar>
+                              <Bar
+                                dataKey="priorPeriod"
+                                name={sevenDayData[0]?.priorLabel || 'Prior 7 Days'}
+                                fill={`url(#colorComparePrior7-${safeHubId})`}
+                                animationDuration={1200}
+                                animationEasing="ease-in-out"
+                                isAnimationActive={true}
+                                radius={[4, 4, 0, 0]}
+                              >
+                                <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={9} />
+                              </Bar>
+                            </BarChart>
+                          ) : (
+                            <div className="flex items-center justify-center h-full">
+                              <span className="text-slate-400 text-sm">No hub data available for this period</span>
+                            </div>
+                          )}
+                        </ResponsiveContainer>
+                      </div>
+
+                      <div className="lg:col-span-1 relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
+                            <h3 className="text-sm font-semibold text-white tracking-wide">Graph Comparison</h3>
+                          </div>
+                        </div>
+                        <ResponsiveContainer width="100%" height={380}>
+                          {graphData.length > 0 ? (
+                            <BarChart
+                              data={graphData}
+                              margin={{ top: 24, right: 30, left: 0, bottom: 30 }}
+                              isAnimationActive={true}
+                              animationDuration={1200}
+                            >
+                              <defs>
+                                <linearGradient id={`colorCompare-${safeHubId}`} x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#a83030" stopOpacity={0.8}/>
+                                  <stop offset="95%" stopColor="#a83030" stopOpacity={0.4}/>
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                              <XAxis
+                                dataKey="period"
+                                stroke="#94a3b8"
+                                fontSize={9}
+                                tickLine={false}
+                                axisLine={false}
+                                interval={0}
+                                height={54}
+                                tickFormatter={(value) => value}
+                              />
+                              <YAxis
+                                stroke="#94a3b8"
+                                fontSize={9}
+                                tickLine={false}
+                                axisLine={false}
+                                width={50}
+                                domain={graphDomain}
+                                ticks={graphTicks}
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: '#1e293b',
+                                  border: '1px solid #334155',
+                                  borderRadius: '6px',
+                                  color: '#fff',
+                                  fontSize: '11px',
+                                  boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                                }}
+                              />
+                              <Bar
+                                dataKey="selectedValue"
+                                name={selectedCategory}
+                                fill={`url(#colorCompare-${safeHubId})`}
+                                animationDuration={1200}
+                                animationEasing="ease-in-out"
+                                isAnimationActive={true}
+                                radius={[4, 4, 0, 0]}
+                              >
+                                <LabelList dataKey="selectedValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#ffffff" fontSize={10} />
+                              </Bar>
+                            </BarChart>
+                          ) : (
+                            <div className="flex items-center justify-center h-full">
+                              <span className="text-slate-400 text-sm">No graph data available for this hub</span>
+                            </div>
+                          )}
+                        </ResponsiveContainer>
+                        <div className="mt-2 text-xs text-slate-400 text-center">Range: Last 7 Days · Prior 7 Days · Month to Date</div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
-            <select 
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
-            >
-              <option value="Cost Per Parcel">Cost Per Parcel</option>
-              <option value="Delivered Ado">Delivered Ado</option>
-              <option value="Dispatched Ado">Dispatched Ado</option>
-              <option value="Success Rate">Success Rate</option>
-              <option value="Delivered Prod">Delivered Prod</option>
-              <option value="Assigned Prod">Assigned Prod</option>
-              <option value="Fleet Count">Fleet Count</option>
-            </select>
-          </div>
-          <ResponsiveContainer width="100%" height={300}>
-            {hubSevenDayComparisonData.length > 0 ? (
-              <BarChart
-                data={hubSevenDayComparisonData}
-                margin={{ top: 24, right: 24, left: 0, bottom: 10 }}
-                isAnimationActive={true}
-                animationDuration={1200}
-              >
-                <defs>
-                  <linearGradient id="colorCompareLast7" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.95}/>
-                    <stop offset="95%" stopColor="#0284c7" stopOpacity={0.75}/>
-                  </linearGradient>
-                  <linearGradient id="colorComparePrior7" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.95}/>
-                    <stop offset="95%" stopColor="#dc2626" stopOpacity={0.75}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
-                <XAxis 
-                  dataKey="month" 
-                  stroke="#94a3b8" 
-                  fontSize={9} 
-                  tickLine={false} 
-                  axisLine={false}
-                  interval={0}
-                />
-                <YAxis 
-                  stroke="#94a3b8" 
-                  fontSize={9} 
-                  tickLine={false} 
-                  axisLine={false} 
-                  width={45}
-                  domain={hubSevenDayComparisonDomain}
-                  ticks={hubYTicks}
-                />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1e293b', 
-                    border: '1px solid #334155', 
-                    borderRadius: '6px',
-                    color: '#fff',
-                    fontSize: '11px',
-                    boxShadow: '0 0 20px rgba(0,0,0,0.5)'
-                  }} 
-                />
-                <Legend
-                  verticalAlign="top"
-                  align="center"
-                  iconType="square"
-                  wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
-                />
-                <Bar 
-                  dataKey="currentPeriod"
-                  name={hubSevenDayComparisonData[0]?.currentLabel || 'Last 7 Days'}
-                  fill="url(#colorCompareLast7)"
-                  animationDuration={1200}
-                  animationEasing="ease-in-out"
-                  isAnimationActive={true}
-                  radius={[4, 4, 0, 0]}
+          ) : (
+            <div className="flex items-center justify-center rounded-lg bg-slate-800/80 border border-slate-600/50 p-8 text-center text-slate-400">
+              Select a cluster to view hub Last vs Prior 7 Days and Graph Comparison.
+            </div>
+          )
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Last vs Prior 7 Days - Wider (left, spans 2 columns on large screens) */}
+            <div className="lg:col-span-2 relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
+                  <h3 className="text-sm font-semibold text-white tracking-wide">Last vs Prior 7 Days</h3>
+                </div>
+                <select 
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
                 >
-                  <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={9} />
-                </Bar>
-                <Bar 
-                  dataKey="priorPeriod"
-                  name={hubSevenDayComparisonData[0]?.priorLabel || 'Prior 7 Days'}
-                  fill="url(#colorComparePrior7)"
-                  animationDuration={1200}
-                  animationEasing="ease-in-out"
-                  isAnimationActive={true}
-                  radius={[4, 4, 0, 0]}
-                >
-                  <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={9} />
-                </Bar>
-              </BarChart>
-            ) : (
-              <div className="flex items-center justify-center h-full">
-                <span className="text-slate-400 text-sm">Select a hub to compare prior and last 7 days</span>
+                  <option value="Cost Per Parcel">Cost Per Parcel</option>
+                  <option value="Delivered Ado">Delivered Ado</option>
+                  <option value="Dispatched Ado">Dispatched Ado</option>
+                  <option value="Success Rate">Success Rate</option>
+                  <option value="Delivered Prod">Delivered Prod</option>
+                  <option value="Assigned Prod">Assigned Prod</option>
+                  <option value="Fleet Count">Fleet Count</option>
+                </select>
               </div>
-            )}
-          </ResponsiveContainer>
-        </div>
+              <ResponsiveContainer width="100%" height={380}>
+                {hubSevenDayComparisonData.length > 0 ? (
+                  <BarChart
+                    data={hubSevenDayComparisonData}
+                    margin={{ top: 24, right: 24, left: 0, bottom: 30 }}
+                    isAnimationActive={true}
+                    animationDuration={1200}
+                  >
+                    <defs>
+                      <linearGradient id="colorCompareLast7" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.95}/>
+                        <stop offset="95%" stopColor="#0284c7" stopOpacity={0.75}/>
+                      </linearGradient>
+                      <linearGradient id="colorComparePrior7" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.95}/>
+                        <stop offset="95%" stopColor="#dc2626" stopOpacity={0.75}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                    <XAxis 
+                      dataKey="month" 
+                      stroke="#94a3b8" 
+                      fontSize={9} 
+                      tick={{ fill: '#cbd5e1', dy: 8 }}
+                      tickLine={false} 
+                      axisLine={false}
+                      interval={0}
+                      height={74}
+                    />
+                    <YAxis 
+                      stroke="#94a3b8" 
+                      fontSize={9} 
+                      tickLine={false} 
+                      axisLine={false} 
+                      width={45}
+                      domain={hubSevenDayComparisonDomain}
+                      ticks={hubYTicks}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: '#1e293b', 
+                        border: '1px solid #334155', 
+                        borderRadius: '6px',
+                        color: '#fff',
+                        fontSize: '11px',
+                        boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                      }} 
+                    />
+                    <Legend
+                      verticalAlign="top"
+                      align="center"
+                      iconType="square"
+                      wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                    />
+                    <Legend
+                      verticalAlign="top"
+                      align="center"
+                      iconType="square"
+                      wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                    />
+                    <Bar 
+                      dataKey="currentPeriod"
+                      name={hubSevenDayComparisonData[0]?.currentLabel || 'Last 7 Days'}
+                      fill="url(#colorCompareLast7)"
+                      animationDuration={1200}
+                      animationEasing="ease-in-out"
+                      isAnimationActive={true}
+                      radius={[4, 4, 0, 0]}
+                    >
+                      <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={9} />
+                    </Bar>
+                    <Bar 
+                      dataKey="priorPeriod"
+                      name={hubSevenDayComparisonData[0]?.priorLabel || 'Prior 7 Days'}
+                      fill="url(#colorComparePrior7)"
+                      animationDuration={1200}
+                      animationEasing="ease-in-out"
+                      isAnimationActive={true}
+                      radius={[4, 4, 0, 0]}
+                    >
+                      <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={9} />
+                    </Bar>
+                  </BarChart>
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <span className="text-slate-400 text-sm">Select a hub or cluster to compare prior and last 7 days</span>
+                  </div>
+                )}
+              </ResponsiveContainer>
+            </div>
+            
+            {/* Graph Comparison - Right, narrower */}
+            <div className="lg:col-span-1 relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
+                  <h3 className="text-sm font-semibold text-white tracking-wide">Graph Comparison</h3>
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={380}>
+                {hubLevelGraphComparisonChartData.length > 0 ? (
+                  <BarChart
+                    data={hubLevelGraphComparisonChartData}
+                    margin={{ top: 24, right: 30, left: 0, bottom: 30 }}
+                    isAnimationActive={true}
+                    animationDuration={1200}
+                  >
+                    <defs>
+                      <linearGradient id="colorCompare" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#a83030" stopOpacity={0.8}/>
+                        <stop offset="95%" stopColor="#a83030" stopOpacity={0.4}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                    <XAxis
+                      dataKey="period"
+                      stroke="#94a3b8"
+                      fontSize={9}
+                      tickLine={false}
+                      axisLine={false}
+                      interval={0}
+                      height={54}
+                      tickFormatter={(value) => value}
+                    />
+                    <YAxis 
+                      stroke="#94a3b8" 
+                      fontSize={9} 
+                      tickLine={false} 
+                      axisLine={false} 
+                      width={50}
+                      domain={chartDomain}
+                      ticks={yTicks}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: '#1e293b', 
+                        border: '1px solid #334155', 
+                        borderRadius: '6px',
+                        color: '#fff',
+                        fontSize: '11px',
+                        boxShadow: '0 0 20px rgba(0,0,0,0.5)'
+                      }} 
+                    />
+                    <Bar 
+                      dataKey="selectedValue"
+                      name={selectedCategory}
+                      fill="url(#colorCompare)"
+                      animationDuration={1200}
+                      animationEasing="ease-in-out"
+                      isAnimationActive={true}
+                      radius={[4, 4, 0, 0]}
+                    >
+                      <LabelList dataKey="selectedValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#ffffff" fontSize={10} />
+                    </Bar>
+                  </BarChart>
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <span className="text-slate-400 text-sm">
+                      Select a hub or cluster to view comparison
+                    </span>
+                  </div>
+                )}
+              </ResponsiveContainer>
+              <div className="mt-2 text-xs text-slate-400 text-center">Last 7 Days · Prior 7 Days · Month to Date</div>
+            </div>
+          </div>
+        )}
 
         {/* KPI Distribution Section - Full Width Below */}
         {selectedHub && selectedHub !== 'All Hubs' ? (
@@ -4840,10 +5471,11 @@ const hubLevelYTicks = useMemo(() => {
 
       {/* Overall Dashboard View - P7D vs L7D Comparison Charts */}
       {dashboardView === 'overall' && (
+        selectedCluster ? (
       <div className="space-y-4">
         {/* Region Title */}
         <div className="text-center">
-          <h2 className="text-xl font-bold text-white">{selectedCluster || 'All Clusters'}</h2>
+          <h2 className="text-xl font-bold text-white">{selectedCluster}</h2>
         </div>
         
         {/* Charts Grid - P7D vs L7D */}
@@ -5161,6 +5793,11 @@ const hubLevelYTicks = useMemo(() => {
           </div>
         </div>
       </div>
+        ) : (
+          <div className="flex items-center justify-center rounded-lg bg-slate-800/80 border border-slate-600/50 p-8 text-center text-slate-400">
+            Select a cluster to view hub Last vs Prior 7 Days and Graph Comparison.
+          </div>
+        )
       )}
     </div>
   )
