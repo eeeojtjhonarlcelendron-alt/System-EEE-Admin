@@ -72,7 +72,8 @@ import {
   PolarAngleAxis,
   PolarRadiusAxis,
   Legend,
-  LabelList
+  LabelList,
+  ReferenceLine
 } from 'recharts'
 
 const PDF_THEME = {
@@ -557,6 +558,7 @@ function Dashboard() {
   const [riderDeliveryTrendTab, setRiderDeliveryTrendTab] = useState('chart') // 'chart' or 'graph' for Rider Delivery Trend
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
+  const [targets, setTargets] = useState({}) // Target percentages from localStorage
   const dashboardFetchStartedRef = useRef(false)
 
   useEffect(() => {
@@ -587,6 +589,21 @@ function Dashboard() {
       active = false
     }
   }, [selectedRider])
+
+  // Load targets from localStorage
+  useEffect(() => {
+    const loadTargets = () => {
+      try {
+        const stored = localStorage.getItem('dashboard_targets')
+        if (stored) {
+          setTargets(JSON.parse(stored))
+        }
+      } catch (error) {
+        console.error('Error loading targets:', error)
+      }
+    }
+    loadTargets()
+  }, [])
 
   const padDate = (value) => String(value).padStart(2, '0')
 
@@ -2124,16 +2141,36 @@ const chartDomain = useMemo(() => {
     return [0, 100]
   }
 
-  return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
-}, [deliveryTrendChartData, selectedCategory])
+  const targetValue = Number(targets[selectedCategory])
+  const topValue = Number.isFinite(targetValue) ? Math.max(maxValue, targetValue) : maxValue
+  return [0, Math.max(10, Math.ceil(topValue * 1.2))]
+}, [deliveryTrendChartData, selectedCategory, targets])
+
+const buildTicksWithTarget = (domain, explicitTicks, targetValue) => {
+  const target = Number(targetValue)
+  if (!Number.isFinite(target)) return explicitTicks
+
+  let ticks = explicitTicks ? [...explicitTicks] : []
+
+  if (!explicitTicks && domain && domain.length === 2 && Number.isFinite(domain[1])) {
+    const [min = 0, max] = domain
+    const step = Math.max(1, Math.round((max - min) / 5))
+    for (let value = min; value <= max; value += step) {
+      ticks.push(value)
+    }
+    if (ticks[ticks.length - 1] !== max) ticks.push(max)
+  }
+
+  ticks.push(target)
+  return Array.from(new Set(ticks.filter(Number.isFinite))).sort((a, b) => a - b)
+}
 
 // Compute explicit Y axis ticks when domain is capped at 100
 const yTicks = useMemo(() => {
   if (!chartDomain || chartDomain.length !== 2) return undefined
-  const max = chartDomain[1]
-  if (max === 100) return [0,20,40,60,80,100]
-  return undefined
-}, [chartDomain])
+  const baseTicks = chartDomain[1] === 100 ? [0,20,40,60,80,100] : undefined
+  return buildTicksWithTarget(chartDomain, baseTicks, targets[selectedCategory])
+}, [chartDomain, selectedCategory, targets])
 
 const hubSevenDayComparisonData = useMemo(() => {
   const hasHubFilter = selectedCluster || (selectedHub && selectedHub !== 'All Hubs')
@@ -2258,15 +2295,17 @@ const hubSevenDayComparisonDomain = useMemo(() => {
   const maxValue = Math.max(...values, 0)
   // If comparison is for percentage-like metrics, cap at 100
   if (['Success Rate', 'Assigned Prod'].includes(selectedCategory)) return [0, 100]
-  return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
-}, [hubSevenDayComparisonData, selectedCategory])
+  const targetValue = Number(targets[selectedCategory])
+  const topValue = Number.isFinite(targetValue) ? Math.max(maxValue, targetValue) : maxValue
+  return [0, Math.max(10, Math.ceil(topValue * 1.2))]
+}, [hubSevenDayComparisonData, selectedCategory, targets])
 
 // Hub comparison explicit ticks when capped at 100
 const hubYTicks = useMemo(() => {
   if (!hubSevenDayComparisonDomain || hubSevenDayComparisonDomain.length !== 2) return undefined
-  if (hubSevenDayComparisonDomain[1] === 100) return [0,20,40,60,80,100]
-  return undefined
-}, [hubSevenDayComparisonDomain])
+  const baseTicks = hubSevenDayComparisonDomain[1] === 100 ? [0,20,40,60,80,100] : undefined
+  return buildTicksWithTarget(hubSevenDayComparisonDomain, baseTicks, targets[selectedCategory])
+}, [hubSevenDayComparisonDomain, selectedCategory, targets])
 
 // Calculate hub level period comparison data for Graph Comparison
 const hubLevelGraphComparison = useMemo(() => {
@@ -2411,14 +2450,16 @@ const hubLevelGraphComparisonDomain = useMemo(() => {
   })
   const maxValue = Math.max(...values, 0)
   if (['Success Rate', 'Assigned Prod'].includes(selectedCategory)) return [0, 100]
-  return [0, Math.max(10, Math.ceil(maxValue * 1.2))]
-}, [hubLevelGraphComparisonChartData, selectedCategory])
+  const targetValue = Number(targets[selectedCategory])
+  const topValue = Number.isFinite(targetValue) ? Math.max(maxValue, targetValue) : maxValue
+  return [0, Math.max(10, Math.ceil(topValue * 1.2))]
+}, [hubLevelGraphComparisonChartData, selectedCategory, targets])
 
 const hubLevelYTicks = useMemo(() => {
   if (!hubLevelGraphComparisonDomain || hubLevelGraphComparisonDomain.length !== 2) return undefined
-  if (hubLevelGraphComparisonDomain[1] === 100) return [0,20,40,60,80,100]
-  return undefined
-}, [hubLevelGraphComparisonDomain])
+  const baseTicks = hubLevelGraphComparisonDomain[1] === 100 ? [0,20,40,60,80,100] : undefined
+  return buildTicksWithTarget(hubLevelGraphComparisonDomain, baseTicks, targets[selectedCategory])
+}, [hubLevelGraphComparisonDomain, selectedCategory, targets])
 
 const getHubSevenDayComparisonDataForHub = useCallback((hubName) => {
   if (!hubName || !dashboardMetrics?.length) return []
@@ -3923,7 +3964,7 @@ const clusterHubSections = useMemo(() => {
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1.5 text-[hsl(220,8%,55%)]">
             <Filter className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-medium tracking-wide uppercase">Filters</span>
+            <span className="text-[10px] font-medium tracking-wide uppercase">Filters</span>
           </div>
           
           <div className="relative hub-search-container">
@@ -3940,7 +3981,7 @@ const clusterHubSections = useMemo(() => {
                 setShowHubDropdown(true)
               }}
               onFocus={() => setShowHubDropdown(true)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
             />
             {showHubDropdown && (
               <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
@@ -3953,13 +3994,13 @@ const clusterHubSections = useMemo(() => {
                         setHubSearchTerm(hub)
                         setShowHubDropdown(false)
                       }}
-                      className="px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
+                      className="px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
                     >
                       {hub}
                     </div>
                   ))
                 ) : (
-                  <div className="px-2 py-1 text-[11px] text-[hsl(220,8%,55%)]">No hubs found</div>
+                  <div className="px-2 py-1 text-[10px] text-[hsl(220,8%,55%)]">No hubs found</div>
                 )}
               </div>
             )}
@@ -3967,33 +4008,33 @@ const clusterHubSections = useMemo(() => {
           
           {/* From Date */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-[hsl(220,8%,55%)]">From:</span>
+            <span className="text-[10px] text-[hsl(220,8%,55%)]">From:</span>
             <input
               type="date"
               value={hubFromDate}
               onChange={(e) => setHubFromDate(e.target.value)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
             />
           </div>
           
           {/* To Date */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-[hsl(220,8%,55%)]">To:</span>
+            <span className="text-[10px] text-[hsl(220,8%,55%)]">To:</span>
             <input
               type="date"
               value={hubToDate}
               onChange={(e) => setHubToDate(e.target.value)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
             />
           </div>
 
           {/* Range Filter */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-[hsl(220,8%,55%)]">Range:</span>
+            <span className="text-[10px] text-[hsl(220,8%,55%)]">Range:</span>
             <select
               value={hubDeliveryTrendRange}
               onChange={(e) => setHubDeliveryTrendRange(e.target.value)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
             >
               <option value="ALL">All Data</option>
               <option value="L7D">Last 7 Days</option>
@@ -4017,7 +4058,7 @@ const clusterHubSections = useMemo(() => {
                 setShowClusterDropdown(true)
               }}
               onFocus={() => setShowClusterDropdown(true)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-2 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-2 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
             />
             {showClusterDropdown && (
               <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
@@ -4027,7 +4068,7 @@ const clusterHubSections = useMemo(() => {
                     setClusterSearchTerm('')
                     setShowClusterDropdown(false)
                   }}
-                  className="px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
+                  className="px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
                 >
                   All Clusters
                 </div>
@@ -4040,13 +4081,13 @@ const clusterHubSections = useMemo(() => {
                         setClusterSearchTerm(cluster)
                         setShowClusterDropdown(false)
                       }}
-                      className="px-2 py-1 text-[11px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
+                      className="px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)] cursor-pointer"
                     >
                       {cluster}
                     </div>
                   ))
                 ) : (
-                  <div className="px-2 py-1 text-[11px] text-[hsl(220,8%,55%)]">No clusters found</div>
+                  <div className="px-2 py-1 text-[10px] text-[hsl(220,8%,55%)]">No clusters found</div>
                 )}
               </div>
             )}
@@ -4109,7 +4150,7 @@ const clusterHubSections = useMemo(() => {
           
           {/* From Date */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-[hsl(220,8%,55%)]">From:</span>
+            <span className="text-[10px] text-[hsl(220,8%,55%)]">From:</span>
             <input
               type="date"
               value={riderFromDate}
@@ -4120,7 +4161,7 @@ const clusterHubSections = useMemo(() => {
           
           {/* To Date */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-[hsl(220,8%,55%)]">To:</span>
+            <span className="text-[10px] text-[hsl(220,8%,55%)]">To:</span>
             <input
               type="date"
               value={riderToDate}
@@ -4131,7 +4172,7 @@ const clusterHubSections = useMemo(() => {
           
           {/* Range Filter */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-[hsl(220,8%,55%)]">Range:</span>
+            <span className="text-[10px] text-[hsl(220,8%,55%)]">Range:</span>
             <select
               value={riderTrendRange}
               onChange={(e) => setRiderTrendRange(e.target.value)}
@@ -4466,6 +4507,29 @@ const clusterHubSections = useMemo(() => {
                           boxShadow: '0 0 20px rgba(0,0,0,0.5)'
                         }} 
                       />
+                      {targets[selectedCategory] && targets[selectedCategory] > 0 && (
+                        <Legend
+                          verticalAlign="top"
+                          align="center"
+                          payload={[
+                            {
+                              value: `${targets[selectedCategory]}${selectedCategory === 'Success Rate' ? '%' : ''}`,
+                              type: 'line',
+                              color: '#10b981',
+                              strokeDasharray: '5 5'
+                            }
+                          ]}
+                          wrapperStyle={{ color: '#10b981', fontSize: 11, paddingBottom: 8 }}
+                        />
+                      )}
+                      {targets[selectedCategory] && targets[selectedCategory] > 0 && (
+                        <ReferenceLine
+                          y={targets[selectedCategory]}
+                          stroke="#10b981"
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                        />
+                      )}
                       <Area 
                         type="monotone" 
                         dataKey="displayValue"
@@ -4477,7 +4541,7 @@ const clusterHubSections = useMemo(() => {
                         animationEasing="ease-in-out"
                         isAnimationActive={true}
                       >
-                        <LabelList dataKey="displayValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
+                        <LabelList dataKey="displayValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#ffffff" fontSize={12} />
                       </Area>
                       <Line
                         type="monotone"
@@ -4561,6 +4625,30 @@ const clusterHubSections = useMemo(() => {
                       wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
                     />
                   )}
+                  {targets[selectedCategory] && targets[selectedCategory] > 0 && (
+                    <Legend
+                      verticalAlign="top"
+                      align="center"
+                      iconType="square"
+                      payload={[
+                        {
+                          value: `${targets[selectedCategory]}${selectedCategory === 'Success Rate' ? '%' : ''}`,
+                          type: 'line',
+                          color: '#10b981',
+                          strokeDasharray: '5 5'
+                        }
+                      ]}
+                      wrapperStyle={{ color: '#10b981', fontSize: 11, paddingBottom: 8 }}
+                    />
+                  )}
+                  {targets[selectedCategory] && targets[selectedCategory] > 0 && (
+                    <ReferenceLine
+                      y={targets[selectedCategory]}
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                    />
+                  )}
                   {filteredChartData[0]?.currentLabel && filteredChartData[0]?.priorLabel ? (
                     <>
                       <Bar 
@@ -4572,7 +4660,7 @@ const clusterHubSections = useMemo(() => {
                         isAnimationActive={true}
                         radius={[4, 4, 0, 0]}
                       >
-                        <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={8} />
+                        <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={12} />
                       </Bar>
                       <Bar 
                         dataKey="priorPeriod"
@@ -4583,7 +4671,7 @@ const clusterHubSections = useMemo(() => {
                         isAnimationActive={true}
                         radius={[4, 4, 0, 0]}
                       >
-                        <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
+                        <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={12} />
                       </Bar>
                     </>
                   ) : (
@@ -4595,7 +4683,7 @@ const clusterHubSections = useMemo(() => {
                       isAnimationActive={true}
                       radius={[4, 4, 0, 0]}
                     >
-                      <LabelList dataKey="displayValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={8} />
+                      <LabelList dataKey="displayValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#ffffff" fontSize={12} />
                     </Bar>
                   )}
                 </BarChart>
@@ -4628,8 +4716,12 @@ const clusterHubSections = useMemo(() => {
                 const graphMax = graphValues.length > 0 ? Math.max(...graphValues) : 0
                 const graphDomain = ['Success Rate', 'Assigned Prod'].includes(selectedCategory)
                   ? [0, 100]
-                  : [0, Math.max(10, Math.ceil(graphMax * 1.2))]
-                const graphTicks = graphDomain[1] === 100 ? [0, 20, 40, 60, 80, 100] : undefined
+                  : [0, Math.max(10, Math.ceil(Math.max(graphMax, Number(targets[selectedCategory]) || 0) * 1.2))]
+                const graphTicks = buildTicksWithTarget(
+                  graphDomain,
+                  graphDomain[1] === 100 ? [0, 20, 40, 60, 80, 100] : undefined,
+                  targets[selectedCategory]
+                )
                 const safeHubId = String(hub || '')
                   .trim()
                   .toLowerCase()
@@ -4681,7 +4773,8 @@ const clusterHubSections = useMemo(() => {
                                 tickLine={false}
                                 axisLine={false}
                                 width={45}
-                                domain={[0, 'auto']}
+                                domain={graphDomain}
+                                ticks={graphTicks}
                               />
                               <Tooltip
                                 contentStyle={{
@@ -4696,15 +4789,34 @@ const clusterHubSections = useMemo(() => {
                               <Legend
                                 verticalAlign="top"
                                 align="center"
-                                iconType="square"
                                 wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                                payload={targets[selectedCategory] && targets[selectedCategory] > 0 ? [
+                                  {
+                                    value: sevenDayData[0]?.currentLabel || 'Last 7 Days',
+                                    type: 'rect',
+                                    color: '#a83030'
+                                  },
+                                  {
+                                    value: sevenDayData[0]?.priorLabel || 'Prior 7 Days',
+                                    type: 'rect',
+                                    color: '#38bdf8'
+                                  },
+                                  {
+                                    value: `${targets[selectedCategory]}${selectedCategory === 'Success Rate' ? '%' : ''}`,
+                                    type: 'line',
+                                    color: '#10b981',
+                                    strokeDasharray: '5 5'
+                                  }
+                                ] : undefined}
                               />
-                              <Legend
-                                verticalAlign="top"
-                                align="center"
-                                iconType="square"
-                                wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
-                              />
+                              {targets[selectedCategory] && targets[selectedCategory] > 0 && (
+                                <ReferenceLine
+                                  y={targets[selectedCategory]}
+                                  stroke="#10b981"
+                                  strokeWidth={2}
+                                  strokeDasharray="5 5"
+                                />
+                              )}
                               <Bar
                                 dataKey="currentPeriod"
                                 name={sevenDayData[0]?.currentLabel || 'Last 7 Days'}
@@ -4714,7 +4826,7 @@ const clusterHubSections = useMemo(() => {
                                 isAnimationActive={true}
                                 radius={[4, 4, 0, 0]}
                               >
-                                <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={9} />
+                                <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={12} />
                               </Bar>
                               <Bar
                                 dataKey="priorPeriod"
@@ -4725,7 +4837,7 @@ const clusterHubSections = useMemo(() => {
                                 isAnimationActive={true}
                                 radius={[4, 4, 0, 0]}
                               >
-                                <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={9} />
+                                <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={12} />
                               </Bar>
                             </BarChart>
                           ) : (
@@ -4787,6 +4899,36 @@ const clusterHubSections = useMemo(() => {
                                   boxShadow: '0 0 20px rgba(0,0,0,0.5)'
                                 }}
                               />
+                              <Legend
+                                verticalAlign="top"
+                                align="center"
+                                wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                                payload={
+                                  [
+                                    {
+                                      value: selectedCategory,
+                                      type: 'rect',
+                                      color: '#a83030'
+                                    },
+                                    ...(targets[selectedCategory] && targets[selectedCategory] > 0 ? [
+                                      {
+                                        value: `${targets[selectedCategory]}${selectedCategory === 'Success Rate' ? '%' : ''}`,
+                                        type: 'line',
+                                        color: '#10b981',
+                                        strokeDasharray: '5 5'
+                                      }
+                                    ] : [])
+                                  ]
+                                }
+                              />
+                              {targets[selectedCategory] && targets[selectedCategory] > 0 && (
+                                <ReferenceLine
+                                  y={targets[selectedCategory]}
+                                  stroke="#10b981"
+                                  strokeWidth={2}
+                                  strokeDasharray="5 5"
+                                />
+                              )}
                               <Bar
                                 dataKey="selectedValue"
                                 name={selectedCategory}
@@ -4796,7 +4938,7 @@ const clusterHubSections = useMemo(() => {
                                 isAnimationActive={true}
                                 radius={[4, 4, 0, 0]}
                               >
-                                <LabelList dataKey="selectedValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#ffffff" fontSize={10} />
+                                <LabelList dataKey="selectedValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#ffffff" fontSize={12} />
                               </Bar>
                             </BarChart>
                           ) : (
@@ -4891,16 +5033,35 @@ const clusterHubSections = useMemo(() => {
                     <Legend
                       verticalAlign="top"
                       align="center"
-                      iconType="square"
                       wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                      payload={targets[selectedCategory] && targets[selectedCategory] > 0 ? [
+                        {
+                          value: hubSevenDayComparisonData[0]?.currentLabel || 'Last 7 Days',
+                          type: 'rect',
+                          color: '#a83030'
+                        },
+                        {
+                          value: hubSevenDayComparisonData[0]?.priorLabel || 'Prior 7 Days',
+                          type: 'rect',
+                          color: '#38bdf8'
+                        },
+                        {
+                          value: `${targets[selectedCategory]}${selectedCategory === 'Success Rate' ? '%' : ''}`,
+                          type: 'line',
+                          color: '#10b981',
+                          strokeDasharray: '5 5'
+                        }
+                      ] : undefined}
                     />
-                    <Legend
-                      verticalAlign="top"
-                      align="center"
-                      iconType="square"
-                      wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
-                    />
-                    <Bar 
+                    {targets[selectedCategory] && targets[selectedCategory] > 0 && (
+                      <ReferenceLine
+                        y={targets[selectedCategory]}
+                        stroke="#10b981"
+                        strokeWidth={2}
+                        strokeDasharray="5 5"
+                      />
+                    )}
+                    <Bar
                       dataKey="currentPeriod"
                       name={hubSevenDayComparisonData[0]?.currentLabel || 'Last 7 Days'}
                       fill="url(#colorCompareLast7)"
@@ -4909,9 +5070,9 @@ const clusterHubSections = useMemo(() => {
                       isAnimationActive={true}
                       radius={[4, 4, 0, 0]}
                     >
-                      <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={9} />
+                      <LabelList dataKey="currentPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#38bdf8" fontSize={12} />
                     </Bar>
-                    <Bar 
+                    <Bar
                       dataKey="priorPeriod"
                       name={hubSevenDayComparisonData[0]?.priorLabel || 'Prior 7 Days'}
                       fill="url(#colorComparePrior7)"
@@ -4920,7 +5081,7 @@ const clusterHubSections = useMemo(() => {
                       isAnimationActive={true}
                       radius={[4, 4, 0, 0]}
                     >
-                      <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={9} />
+                      <LabelList dataKey="priorPeriod" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#f87171" fontSize={12} />
                     </Bar>
                   </BarChart>
                 ) : (
@@ -4970,19 +5131,49 @@ const clusterHubSections = useMemo(() => {
                       tickLine={false} 
                       axisLine={false} 
                       width={50}
-                      domain={chartDomain}
-                      ticks={yTicks}
+                      domain={hubLevelGraphComparisonDomain}
+                      ticks={hubLevelYTicks}
                     />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: '#1e293b', 
-                        border: '1px solid #334155', 
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#1e293b',
+                        border: '1px solid #334155',
                         borderRadius: '6px',
                         color: '#fff',
                         fontSize: '11px',
                         boxShadow: '0 0 20px rgba(0,0,0,0.5)'
-                      }} 
+                      }}
                     />
+                    <Legend
+                      verticalAlign="top"
+                      align="center"
+                      wrapperStyle={{ color: '#cbd5e1', fontSize: 11, paddingBottom: 8 }}
+                      payload={
+                        [
+                          {
+                            value: selectedCategory,
+                            type: 'rect',
+                            color: '#a83030'
+                          },
+                          ...(targets[selectedCategory] && targets[selectedCategory] > 0 ? [
+                            {
+                              value: `${targets[selectedCategory]}${selectedCategory === 'Success Rate' ? '%' : ''}`,
+                              type: 'line',
+                              color: '#10b981',
+                              strokeDasharray: '5 5'
+                            }
+                          ] : [])
+                        ]
+                      }
+                    />
+                    {targets[selectedCategory] && targets[selectedCategory] > 0 && (
+                      <ReferenceLine
+                        y={targets[selectedCategory]}
+                        stroke="#10b981"
+                        strokeWidth={2}
+                        strokeDasharray="5 5"
+                      />
+                    )}
                     <Bar 
                       dataKey="selectedValue"
                       name={selectedCategory}
@@ -4992,7 +5183,7 @@ const clusterHubSections = useMemo(() => {
                       isAnimationActive={true}
                       radius={[4, 4, 0, 0]}
                     >
-                      <LabelList dataKey="selectedValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#ffffff" fontSize={10} />
+                      <LabelList dataKey="selectedValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#ffffff" fontSize={12} />
                     </Bar>
                   </BarChart>
                 ) : (
@@ -5009,7 +5200,7 @@ const clusterHubSections = useMemo(() => {
         )}
 
         {/* KPI Distribution Section - Full Width Below */}
-        {selectedHub && selectedHub !== 'All Hubs' ? (
+        {false && (selectedHub && selectedHub !== 'All Hubs' ? (
         <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
@@ -5069,12 +5260,12 @@ const clusterHubSections = useMemo(() => {
         <div className="flex items-center justify-center rounded-lg bg-slate-800/80 border border-slate-600/50 p-6 text-center text-slate-400">
           Select a hub to view KPI distribution.
         </div>
-        )}
+        ))}
       </div>
       )}
 
       {/* Rider Stats Section - Hub Level Only */}
-      {dashboardView === 'hub' && (
+      {false && dashboardView === 'hub' && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Riders No Route */}
         <div className="relative bg-slate-800/80 backdrop-blur-sm rounded-lg p-4 border border-slate-600/50 hover:border-slate-500/50 transition-all duration-300 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
