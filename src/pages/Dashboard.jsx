@@ -504,6 +504,31 @@ function StatCard({ title, value, subtext, icon: Icon, trend, accentColor = 'bg-
   )
 }
 
+function GraphComparisonPeriodLabel({ viewBox = {}, value }) {
+  if (!value) return null
+
+  const { x = 0, y = 0, width = 0, height = 0 } = viewBox
+  const centerX = Number(x) + Number(width) / 2
+  const labelY = Number(y) + Number(height) + 16
+
+  if (![centerX, labelY].every(Number.isFinite)) return null
+
+  return (
+    <text
+      x={centerX}
+      y={labelY}
+      className="recharts-text recharts-label"
+      textAnchor="middle"
+      fill="#cbd5e1"
+      fontSize={10}
+      fontWeight={600}
+      pointerEvents="none"
+    >
+      <tspan x={centerX} dy="0em">{value}</tspan>
+    </text>
+  )
+}
+
 function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
@@ -620,6 +645,12 @@ function Dashboard() {
     return new Date(year, month - 1, day)
   }
 
+  const formatCompactDateTick = (value) => {
+    const date = parseDateString(value)
+    if (!date) return value
+    return `${date.getMonth() + 1}-${date.getDate()}`
+  }
+
   const getMaxDateString = (values) => {
     return values
       .map(value => String(value || '').split('T')[0])
@@ -641,14 +672,15 @@ function Dashboard() {
     const latestDate = parseDateString(latestDateString)
     if (!latestDate || rangeType === 'ALL') return { start: '', end: '' }
 
-    const start = new Date(latestDate)
+    let start = new Date(latestDate)
     const end = new Date(latestDate)
 
     if (rangeType === 'L7D') {
       start.setDate(start.getDate() - 6)
     } else if (rangeType === 'P7D') {
       end.setDate(end.getDate() - 7)
-      start.setDate(end.getDate() - 6)
+      start = new Date(end)
+      start.setDate(start.getDate() - 6)
     } else if (rangeType === 'MTD') {
       start.setDate(1)
     }
@@ -694,6 +726,10 @@ function Dashboard() {
   const formatGraphValue = (value, metric) => {
     const rounded = roundGraphValue(value)
     return metric === 'Success Rate' ? `${rounded}%` : rounded
+  }
+
+  const formatDeliveryTrendTooltip = (value) => {
+    return [formatGraphValue(value, selectedCategory), selectedCategory]
   }
 
   const processPerformanceChartData = useCallback((records) => {
@@ -2636,7 +2672,6 @@ const getHubLevelGraphComparisonForHub = useCallback((hubName) => {
     })
 
     return {
-      period: '',
       'Success Rate': totals.count > 0 ? roundGraphValue((totals.success_rate / totals.count) * 100) : 0,
       'Riders': roundGraphValue(totals.riders),
       'Total Delivered': roundGraphValue(totals.delivered),
@@ -4476,15 +4511,12 @@ const clusterHubSections = useMemo(() => {
                         tickLine={false} 
                         axisLine={false}
                         interval={0}
-                        angle={filteredChartDataWithSelectedValue?.length > 15 ? -90 : 0}
-                        textAnchor={filteredChartDataWithSelectedValue?.length > 15 ? 'end' : 'middle'}
-                        height={filteredChartDataWithSelectedValue?.length > 15 ? 80 : 40}
-                        tickFormatter={(value) => {
-                          const date = new Date(value)
-                          return Number.isNaN(date.getTime())
-                            ? value
-                            : date.toLocaleDateString('en-US')
-                        }}
+                        minTickGap={0}
+                        angle={0}
+                        textAnchor="middle"
+                        height={40}
+                        tickMargin={8}
+                        tickFormatter={formatCompactDateTick}
                       />
                       <YAxis 
                         stroke="#94a3b8" 
@@ -4505,7 +4537,8 @@ const clusterHubSections = useMemo(() => {
                           color: '#fff',
                           fontSize: '11px',
                           boxShadow: '0 0 20px rgba(0,0,0,0.5)'
-                        }} 
+                        }}
+                        formatter={formatDeliveryTrendTooltip}
                       />
                       {targets[selectedCategory] && targets[selectedCategory] > 0 && (
                         <Legend
@@ -4533,6 +4566,7 @@ const clusterHubSections = useMemo(() => {
                       <Area 
                         type="monotone" 
                         dataKey="displayValue"
+                        name={selectedCategory}
                         stroke="#a83030" 
                         strokeWidth={2}
                         fillOpacity={0.3} 
@@ -4546,6 +4580,7 @@ const clusterHubSections = useMemo(() => {
                       <Line
                         type="monotone"
                         dataKey="displayValue"
+                        name={selectedCategory}
                         stroke="#f87171"
                         strokeWidth={2}
                         dot={false}
@@ -4586,15 +4621,12 @@ const clusterHubSections = useMemo(() => {
                     tickLine={false} 
                     axisLine={false}
                     interval={0}
-                    angle={filteredChartDataWithSelectedValue?.length > 15 ? -90 : 0}
-                    textAnchor={filteredChartDataWithSelectedValue?.length > 15 ? 'end' : 'middle'}
-                    height={filteredChartDataWithSelectedValue?.length > 15 ? 80 : 40}
-                    tickFormatter={(value) => {
-                      const date = new Date(value)
-                      return Number.isNaN(date.getTime())
-                        ? value
-                        : date.toLocaleDateString('en-US')
-                    }}
+                    minTickGap={0}
+                    angle={0}
+                    textAnchor="middle"
+                    height={40}
+                    tickMargin={8}
+                    tickFormatter={formatCompactDateTick}
                   />
                   <YAxis 
                     stroke="#94a3b8" 
@@ -4615,7 +4647,8 @@ const clusterHubSections = useMemo(() => {
                       color: '#fff',
                       fontSize: '11px',
                       boxShadow: '0 0 20px rgba(0,0,0,0.5)'
-                    }} 
+                    }}
+                    formatter={formatDeliveryTrendTooltip}
                   />
                   {filteredChartData[0]?.currentLabel && filteredChartData[0]?.priorLabel && (
                     <Legend
@@ -4677,6 +4710,7 @@ const clusterHubSections = useMemo(() => {
                   ) : (
                     <Bar 
                       dataKey="displayValue"
+                      name={selectedCategory}
                       fill="url(#colorBar)"
                       animationDuration={1200}
                       animationEasing="ease-in-out"
@@ -4874,11 +4908,11 @@ const clusterHubSections = useMemo(() => {
                                 dataKey="period"
                                 stroke="#94a3b8"
                                 fontSize={9}
+                                tick={false}
                                 tickLine={false}
                                 axisLine={false}
                                 interval={0}
-                                height={54}
-                                tickFormatter={(value) => value}
+                                height={36}
                               />
                               <YAxis
                                 stroke="#94a3b8"
@@ -4939,6 +4973,7 @@ const clusterHubSections = useMemo(() => {
                                 radius={[4, 4, 0, 0]}
                               >
                                 <LabelList dataKey="selectedValue" position="top" formatter={(value) => formatGraphValue(value, selectedCategory)} fill="#ffffff" fontSize={12} />
+                                <LabelList dataKey="period" content={<GraphComparisonPeriodLabel />} />
                               </Bar>
                             </BarChart>
                           ) : (
@@ -4947,7 +4982,6 @@ const clusterHubSections = useMemo(() => {
                             </div>
                           )}
                         </ResponsiveContainer>
-                        <div className="mt-2 text-xs text-slate-400 text-center">Range: Last 7 Days · Prior 7 Days · Month to Date</div>
                       </div>
                     </div>
                   </div>
@@ -5194,7 +5228,6 @@ const clusterHubSections = useMemo(() => {
                   </div>
                 )}
               </ResponsiveContainer>
-              <div className="mt-2 text-xs text-slate-400 text-center">Last 7 Days · Prior 7 Days · Month to Date</div>
             </div>
           </div>
         )}
@@ -5564,9 +5597,11 @@ const clusterHubSections = useMemo(() => {
                       dataKey="date" 
                       stroke="#64748b"
                       fontSize={10}
-                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      tickFormatter={formatCompactDateTick}
                       interval={0}
                       minTickGap={0}
+                      angle={0}
+                      textAnchor="middle"
                     />
                     <YAxis stroke="#64748b" fontSize={10} />
                     <Tooltip 
@@ -5615,7 +5650,11 @@ const clusterHubSections = useMemo(() => {
                       dataKey="date" 
                       stroke="#64748b"
                       fontSize={10}
-                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      tickFormatter={formatCompactDateTick}
+                      interval={0}
+                      minTickGap={0}
+                      angle={0}
+                      textAnchor="middle"
                     />
                     <YAxis stroke="#64748b" fontSize={10} />
                     <Tooltip 
