@@ -3996,13 +3996,13 @@ const clusterHubSections = useMemo(() => {
       {/* Filters Bar - Hub View */}
       {dashboardView === 'hub' && (
       <div className="bg-[hsl(220,20%,14%)] rounded-[14px] p-3 border border-[hsl(220,13%,30%)] shadow-[0_2px_8px_rgba(0,0,0,0.05)] z-50">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5 text-[hsl(220,8%,55%)]">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 text-[hsl(220,8%,55%)]">
             <Filter className="w-3.5 h-3.5" />
             <span className="text-[10px] font-medium tracking-wide uppercase">Filters</span>
           </div>
           
-          <div className="relative hub-search-container">
+          <div className="relative hub-search-container min-w-0">
             <input 
               type="text"
               placeholder="Search hub..."
@@ -4016,7 +4016,7 @@ const clusterHubSections = useMemo(() => {
                 setShowHubDropdown(true)
               }}
               onFocus={() => setShowHubDropdown(true)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-44 max-w-[11rem]"
             />
             {showHubDropdown && (
               <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
@@ -4078,8 +4078,8 @@ const clusterHubSections = useMemo(() => {
             </select>
           </div>
 
-          {/* Cluster Filter (searchable) */}
-          <div className="relative cluster-search-container">
+          {/* Cluster Filter */}
+          <div className="relative cluster-search-container min-w-0 flex items-center gap-1.5">
             <input
               type="text"
               placeholder="Search cluster..."
@@ -4093,10 +4093,10 @@ const clusterHubSections = useMemo(() => {
                 setShowClusterDropdown(true)
               }}
               onFocus={() => setShowClusterDropdown(true)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-2 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-32 max-w-[8rem]"
             />
             {showClusterDropdown && (
-              <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
+              <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-40">
                 <div
                   onClick={() => {
                     setSelectedCluster('')
@@ -4230,14 +4230,14 @@ const clusterHubSections = useMemo(() => {
       {/* Filters Bar for Overall View */}
       {dashboardView === 'overall' && (
       <div className="bg-[hsl(220,20%,14%)] rounded-[14px] p-3 border border-[hsl(220,13%,30%)] shadow-[0_2px_8px_rgba(0,0,0,0.05)] z-50">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5 text-[hsl(220,8%,55%)]">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 text-[hsl(220,8%,55%)]">
             <Filter className="w-3.5 h-3.5" />
             <span className="text-[11px] font-medium tracking-wide uppercase">Filters</span>
           </div>
           
           {/* Cluster Filter */}
-          <div className="relative cluster-search-container">
+          <div className="relative cluster-search-container min-w-0 flex-shrink-0 max-w-[9.5rem]">
             <input
               type="text"
               placeholder="Search cluster..."
@@ -4251,7 +4251,7 @@ const clusterHubSections = useMemo(() => {
                 setShowClusterDropdown(true)
               }}
               onFocus={() => setShowClusterDropdown(true)}
-              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-2 text-[11px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-64 pl-16"
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none w-full"
             />
             {showClusterDropdown && (
               <div className="absolute top-full left-0 mt-1 bg-[hsl(220,20%,14%)] border border-[hsl(220,13%,30%)] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.07)] z-[99999] max-h-40 overflow-y-auto w-64">
