@@ -4783,12 +4783,12 @@ const clusterHubSections = useMemo(() => {
                             >
                               <defs>
                                 <linearGradient id={`colorCompareLast7-${safeHubId}`} x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.95}/>
-                                  <stop offset="95%" stopColor="#0284c7" stopOpacity={0.75}/>
+                                  <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.55}/>
+                                  <stop offset="95%" stopColor="#0284c7" stopOpacity={0.28}/>
                                 </linearGradient>
                                 <linearGradient id={`colorComparePrior7-${safeHubId}`} x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.95}/>
-                                  <stop offset="95%" stopColor="#dc2626" stopOpacity={0.75}/>
+                                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.55}/>
+                                  <stop offset="95%" stopColor="#dc2626" stopOpacity={0.28}/>
                                 </linearGradient>
                               </defs>
                               <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
@@ -5026,12 +5026,12 @@ const clusterHubSections = useMemo(() => {
                   >
                     <defs>
                       <linearGradient id="colorCompareLast7" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.95}/>
-                        <stop offset="95%" stopColor="#0284c7" stopOpacity={0.75}/>
+                        <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.55}/>
+                        <stop offset="95%" stopColor="#0284c7" stopOpacity={0.28}/>
                       </linearGradient>
                       <linearGradient id="colorComparePrior7" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.95}/>
-                        <stop offset="95%" stopColor="#dc2626" stopOpacity={0.75}/>
+                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.55}/>
+                        <stop offset="95%" stopColor="#dc2626" stopOpacity={0.28}/>
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />

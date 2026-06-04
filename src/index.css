@@ -330,3 +330,19 @@ a:hover {
 .nested-tight-inner {
   border-radius: var(--radius-sm); /* 6px */
 }
+
+/* ============================================================
+   FORMS: Hide native number input spinner controls
+   Removes up/down arrows on number inputs across browsers while
+   preserving numeric keyboard on mobile (use inputmode on inputs)
+   ============================================================ */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type=number] {
+  -moz-appearance: textfield; /* Firefox */
+}
+
