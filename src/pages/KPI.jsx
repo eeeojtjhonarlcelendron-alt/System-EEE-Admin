@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Upload, Filter, Download, Search, X, ChevronDown, Loader2, Calendar, Building2, MapPin, CheckCircle, AlertCircle, AlertTriangle, Users } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { getKpiRecords, batchInsertKpiRecords, deleteAllKpiRecords, getClusterLeaders } from '../lib/data'
+import { getKpiRecords, batchInsertKpiRecords, deleteAllKpiRecords } from '../lib/data'
 import { SkeletonKPI } from '../components/Skeleton'
 
 function parsePercentage(value) {
@@ -12,6 +12,15 @@ function parsePercentage(value) {
   // Convert decimals (0.93) to integers (93)
   const result = num <= 1 ? Math.round(num * 100) : Math.round(num)
   return result
+}
+
+function formatPercentageValue(value) {
+  if (value === null || value === undefined || value === '') return ''
+  const num = typeof value === 'number' ? value : parseFloat(String(value).trim())
+  if (Number.isNaN(num)) return value
+  const percent = num <= 1 ? num * 100 : num
+  const fixed = Number.isInteger(percent) ? percent : parseFloat(percent.toFixed(2))
+  return `${fixed}%`
 }
 
 function parseDate(dateValue) {
@@ -116,22 +125,26 @@ function KPI() {
 
   // Fetch cluster leaders on mount
   useEffect(() => {
-    async function fetchClusterLeaders() {
-      console.log('Fetching cluster leaders...')
-      const { data, error } = await getClusterLeaders()
-      console.log('Cluster leaders response:', { data, error })
-      if (error) {
-        console.error('Failed to fetch cluster leaders:', error)
-        setClusterLeaders([])
-      } else {
-          setClusterLeaders(data || [])
-      }
-    }
-    fetchClusterLeaders()
-  }, [])
+    const clusterLeadNames = Array.from(
+      new Set(
+        data
+          .map(item => String(item.CLUSTERING ?? item.clustering ?? '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b))
+    setClusterLeaders(clusterLeadNames)
+  }, [data])
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
+  }
+
+  const parseFilterDate = (value) => {
+    const normalized = parseDate(value)
+    if (!normalized) return null
+    const [year, month, day] = normalized.split('-').map(Number)
+    if (!year || !month || !day) return null
+    return Date.UTC(year, month - 1, day)
   }
 
   const applyFilters = useCallback(() => {
@@ -147,29 +160,27 @@ function KPI() {
       )
     }
 
-    // Apply date filters
-    if (filters.dateFrom) {
-      result = result.filter(item => item.date >= filters.dateFrom)
+    // Apply date filters using normalized UTC comparisons
+    const fromTime = filters.dateFrom ? parseFilterDate(filters.dateFrom) : null
+    const toTime = filters.dateTo ? parseFilterDate(filters.dateTo) : null
+    if (fromTime !== null) {
+      result = result.filter(item => {
+        const itemTime = parseFilterDate(item.date)
+        return itemTime !== null && itemTime >= fromTime
+      })
     }
-    if (filters.dateTo) {
-      result = result.filter(item => item.date <= filters.dateTo)
+    if (toTime !== null) {
+      result = result.filter(item => {
+        const itemTime = parseFilterDate(item.date)
+        return itemTime !== null && itemTime <= toTime
+      })
     }
 
-    // Apply cluster lead filter
+    // Apply cluster lead filter using CLUSTERING column values
     if (filters.clusterLead) {
-      // Create hub-to-cluster mapping from cluster leaders
-      const hubToClusterMap = {}
-      clusterLeaders.forEach(leader => {
-        if (leader.hubs && Array.isArray(leader.hubs)) {
-          leader.hubs.forEach(hub => {
-            hubToClusterMap[hub] = leader.leader_name
-          })
-        }
-      })
-      
       result = result.filter(item => {
-        const clusterLead = hubToClusterMap[item.operator_hub]
-        return clusterLead === filters.clusterLead
+        const clusterLeadName = String(item.CLUSTERING ?? item.clustering ?? '').trim()
+        return clusterLeadName === filters.clusterLead
       })
     }
 
@@ -402,12 +413,24 @@ function KPI() {
     XLSX.writeFile(wb, 'kpi_data.xlsx')
   }
 
-  const uniqueSubRegions = [...new Set(data.map(item => item.sub_region).filter(Boolean))]
-  const uniqueHubs = [...new Set(data.map(item => item.operator_hub))]
-  const uniqueGrades = [...new Set(data.map(item => item.grade))]
+  const internalKpiColumns = [
+    'id', 'Date', 'region', 'sub_region', 'operator_hub', 'cluster',
+    'score', 'grade', 'remarks', 'cfr', 'sr', 'aging_four_days',
+    'line_haul_compliance', 'cod_remittance', 'eod_compliance',
+    'rts', 'loss'
+  ]
+
   const totalPages = Math.max(1, Math.ceil(filteredData.length / rowsPerPage))
   const startIndex = (currentPage - 1) * rowsPerPage
   const paginatedData = filteredData.slice(startIndex, startIndex + rowsPerPage)
+
+  const allColumns = paginatedData.length ? Object.keys(paginatedData[0]).filter(Boolean) : []
+  const displayedColumns = allColumns.filter(key => !internalKpiColumns.includes(key))
+  const tableColumns = displayedColumns.length > 0 ? displayedColumns : allColumns.filter(key => internalKpiColumns.includes(key))
+
+  const uniqueSubRegions = [...new Set(data.map(item => item.sub_region).filter(Boolean))]
+  const uniqueHubs = [...new Set(data.map(item => item.operator_hub))]
+  const uniqueGrades = [...new Set(data.map(item => item.grade))]
 
   useEffect(() => {
     setCurrentPage(1)
@@ -535,9 +558,9 @@ function KPI() {
               className="w-full px-2.5 py-1.5 text-xs bg-slate-700/80 border border-slate-600 rounded-lg focus:ring-2 focus:ring-maroon-500 focus:border-maroon-500 outline-none transition-all duration-200 text-white hover:bg-slate-700"
             >
               <option value="" className="bg-slate-700">All Cluster Leads</option>
-              {clusterLeaders.map(leader => (
-                <option key={leader.id} value={leader.leader_name} className="bg-slate-700">
-                  {leader.leader_name}
+              {clusterLeaders.map(leaderName => (
+                <option key={leaderName} value={leaderName} className="bg-slate-700">
+                  {leaderName}
                 </option>
               ))}
             </select>
@@ -550,57 +573,45 @@ function KPI() {
       <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 overflow-hidden">
         <div className="overflow-x-auto max-h-[calc(100vh-280px)]">
           <table className="w-full">
-            <thead className="bg-slate-700/50 sticky top-0 z-10">
+            <thead className="bg-slate-700 sticky top-0 z-10">
               <tr className="border-b border-slate-600">
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Date</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Region</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Sub Region</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Operator Hub</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Cluster</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Score</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Grade</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Remarks</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">CFR</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">SR</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">% Aging ≥4d</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Line Haul</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">COD Rem.</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">EOD Comp.</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">RTS %</th>
-                <th className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Loss</th>
+                {tableColumns.map((column) => (
+                  <th key={column} className="px-2 py-2 text-left text-[10px] font-semibold text-slate-300 uppercase tracking-wide whitespace-nowrap">
+                    {column.replace(/_/g, ' ')}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
               {paginatedData.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-700/50 transition-all duration-200">
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.date}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs font-semibold text-white">{row.region}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.sub_region}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.operator_hub}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">
-                    {(() => {
-                      // Find cluster leader for this hub
-                      const clusterLeader = clusterLeaders.find(leader => 
-                        leader.hubs && leader.hubs.includes(row.operator_hub)
+                <tr key={row.id} className="hover:bg-slate-700 transition-all duration-200">
+                  {tableColumns.map((column) => {
+                    const value = row[column]
+                    if (column === 'Grade') {
+                      return (
+                        <td key={column} className="px-2 py-1.5 whitespace-nowrap">
+                          <span className={`inline-flex px-2 py-0.5 text-[10px] font-semibold rounded-full ${getGradeBadgeColor(value)}`}>
+                            {value}
+                          </span>
+                        </td>
                       )
-                      return clusterLeader ? clusterLeader.leader_name : ''
-                    })()}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs font-semibold text-white">{row.score}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">
-                    <span className={`inline-flex px-2 py-0.5 text-[10px] font-semibold rounded-full ${getGradeBadgeColor(row.grade)}`}>
-                      {row.grade}
-                    </span>
-                  </td>
-                  <td className="px-2 py-1.5 text-xs text-slate-400 max-w-xs truncate">{row.remarks}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.cfr}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.sr}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.aging_four_days}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.line_haul_compliance}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.cod_remittance}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.eod_compliance}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.rts}%</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">{row.loss}%</td>
+                    }
+                    if (column.toLowerCase() !== 'date' && (typeof value === 'number' || !Number.isNaN(parseFloat(String(value || '').trim())))) {
+                      const parsed = typeof value === 'number' ? value : parseFloat(String(value || '').trim())
+                      if (!Number.isNaN(parsed)) {
+                        return (
+                          <td key={column} className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">
+                            {formatPercentageValue(parsed)}
+                          </td>
+                        )
+                      }
+                    }
+                    return (
+                      <td key={column} className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400 max-w-xs truncate">
+                        {value ?? ''}
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
             </tbody>

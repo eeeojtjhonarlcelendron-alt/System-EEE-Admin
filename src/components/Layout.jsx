@@ -26,13 +26,14 @@ function Layout({ onLogout }) {
     if (path === '/dashboard') return 'Dashboard'
     if (path.startsWith('/data-management/performance')) return 'Performance Management'
     if (path.startsWith('/data-management/target')) return 'Target Settings'
+    if (path.startsWith('/data-management/kpi')) return 'KPI Management'
     // Clustering page removed
     return 'Dashboard'
   }
   
   const pageTitle = getPageTitle()
 
-  const isDataManagementActive = ['/data-management/performance', '/data-management/target'].some(path => 
+  const isDataManagementActive = ['/data-management/performance', '/data-management/target', '/data-management/kpi'].some(path => 
     location.pathname.startsWith(path)
   )
 
@@ -158,6 +159,22 @@ function Layout({ onLogout }) {
                     >
                       <Target className="w-4 h-4" />
                       Target
+                    </NavLink>
+                  </li>
+                  <li>
+                    <NavLink
+                      to="/data-management/kpi"
+                      onClick={() => setSidebarOpen(false)}
+                      className={({ isActive }) =>
+                        `flex items-center text-xs gap-3 px-4 py-2 rounded-lg transition ${
+                          isActive
+                            ? 'bg-maroon-600/50 text-maroon-400 font-medium'
+                            : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                        }`
+                      }
+                    >
+                      <BarChart3 className="w-4 h-4" />
+                      KPI
                     </NavLink>
                   </li>
                   {/* Clustering removed */}

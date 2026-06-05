@@ -567,6 +567,7 @@ function Dashboard() {
   const [selectedCluster, setSelectedCluster] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('Cost Per Parcel')
   const [dashboardView, setDashboardView] = useState('hub') // 'hub', 'rider', or 'overall'
+  const [hubViewMode, setHubViewMode] = useState('performance') // 'performance' or 'kpi'
   const [selectedDate, setSelectedDate] = useState('') // empty by default
   const [clusterLeaders, setClusterLeaders] = useState([])
   const [riderTrendRange, setRiderTrendRange] = useState('L7D') // 'L7D', 'P7D', 'MTD', or 'ALL' for Rider Level filter
@@ -659,6 +660,209 @@ function Dashboard() {
       .pop() || ''
   }
 
+  const parseKpiNumber = (value) => {
+    if (value === null || value === undefined || value === '') return 0
+    const numeric = Number(String(value).replace(/%/g, '').trim())
+    return Number.isFinite(numeric) ? numeric : 0
+  }
+
+  const mapKpiTrendRow = (item) => ({
+    'Scorecard': item.count > 0 ? roundGraphValue(item.score / item.count) : 0,
+    'LM Clear Floor Rate Ach %': item.cfrCount > 0 ? roundGraphValue(item.cfr / item.cfrCount) : 0,
+    'Delivery Success Rate Actual': item.srCount > 0 ? roundGraphValue(item.sr / item.srCount) : 0,
+    'Line Haul Pick-up Compliance Ach %': item.lineHaulCount > 0 ? roundGraphValue(item.line_haul_compliance / item.lineHaulCount) : 0,
+    'COD Compliance Ach %': item.codCount > 0 ? roundGraphValue(item.cod_remittance / item.codCount) : 0,
+    'Process Compliance Ach %': item.eodCount > 0 ? roundGraphValue(item.eod_compliance / item.eodCount) : 0,
+    'RTS % Ach %': item.rtsCount > 0 ? roundGraphValue(item.rts / item.rtsCount) : 0,
+    'Loss % Ach %': item.lossCount > 0 ? roundGraphValue(item.loss / item.lossCount) : 0,
+    'Expedite Delivery Performance Ach %': item.expediteCount > 0 ? roundGraphValue(item.expedite / item.expediteCount) : 0
+  })
+
+  const aggregateKpiRowsByDate = (rows) => {
+    const aggregated = {}
+    ;(rows || []).forEach(item => {
+      const date = String(item.date || '').split('T')[0]
+      if (!date) return
+
+      if (!aggregated[date]) {
+        aggregated[date] = {
+          date,
+          count: 0,
+          score: 0,
+          scoreCount: 0,
+          cfr: 0,
+          cfrCount: 0,
+          sr: 0,
+          srCount: 0,
+          line_haul_compliance: 0,
+          lineHaulCount: 0,
+          cod_remittance: 0,
+          codCount: 0,
+          eod_compliance: 0,
+          eodCount: 0,
+          rts: 0,
+          rtsCount: 0,
+          loss: 0,
+          lossCount: 0,
+          expedite: 0,
+          expediteCount: 0
+        }
+      }
+
+      const entry = aggregated[date]
+      const scoreValue = parseKpiNumber(item.score)
+      if (item.score !== undefined && item.score !== null && String(item.score).trim() !== '') {
+        entry.score += scoreValue
+        entry.scoreCount += 1
+      }
+      const cfrValue = parseKpiNumber(item.cfr)
+      if (item.cfr !== undefined && item.cfr !== null && String(item.cfr).trim() !== '') {
+        entry.cfr += cfrValue
+        entry.cfrCount += 1
+      }
+      const srValue = parseKpiNumber(item.sr)
+      if (item.sr !== undefined && item.sr !== null && String(item.sr).trim() !== '') {
+        entry.sr += srValue
+        entry.srCount += 1
+      }
+      const lineHaulValue = parseKpiNumber(item.line_haul_compliance)
+      if (item.line_haul_compliance !== undefined && item.line_haul_compliance !== null && String(item.line_haul_compliance).trim() !== '') {
+        entry.line_haul_compliance += lineHaulValue
+        entry.lineHaulCount += 1
+      }
+      const codValue = parseKpiNumber(item.cod_remittance)
+      if (item.cod_remittance !== undefined && item.cod_remittance !== null && String(item.cod_remittance).trim() !== '') {
+        entry.cod_remittance += codValue
+        entry.codCount += 1
+      }
+      const eodValue = parseKpiNumber(item.eod_compliance)
+      if (item.eod_compliance !== undefined && item.eod_compliance !== null && String(item.eod_compliance).trim() !== '') {
+        entry.eod_compliance += eodValue
+        entry.eodCount += 1
+      }
+      const rtsValue = parseKpiNumber(item.rts)
+      if (item.rts !== undefined && item.rts !== null && String(item.rts).trim() !== '') {
+        entry.rts += rtsValue
+        entry.rtsCount += 1
+      }
+      const lossValue = parseKpiNumber(item.loss)
+      if (item.loss !== undefined && item.loss !== null && String(item.loss).trim() !== '') {
+        entry.loss += lossValue
+        entry.lossCount += 1
+      }
+      const expediteValue = parseKpiNumber(item['Expedite Delivery Performance Ach %'] ?? item['Expedite Delivery Performance Ach Percent'] ?? item['Expedite Delivery Performance'] ?? item.expedite)
+      if ((item['Expedite Delivery Performance Ach %'] !== undefined && item['Expedite Delivery Performance Ach %'] !== null && String(item['Expedite Delivery Performance Ach %']).trim() !== '') ||
+          (item['Expedite Delivery Performance Ach Percent'] !== undefined && item['Expedite Delivery Performance Ach Percent'] !== null && String(item['Expedite Delivery Performance Ach Percent']).trim() !== '') ||
+          (item['Expedite Delivery Performance'] !== undefined && item['Expedite Delivery Performance'] !== null && String(item['Expedite Delivery Performance']).trim() !== '') ||
+          (item.expedite !== undefined && item.expedite !== null && String(item.expedite).trim() !== '')) {
+        entry.expedite += expediteValue
+        entry.expediteCount += 1
+      }
+      entry.count += 1
+    })
+
+    return Object.values(aggregated).sort((a, b) => a.date.localeCompare(b.date))
+  }
+
+  const calculateKpiPeriodAverages = (rows) => {
+    const aggregated = aggregateKpiRowsByDate(rows)
+    if (!aggregated.length) return null
+
+    const totals = KPI_TREND_OPTIONS.reduce((acc, key) => {
+      acc[key] = 0
+      return acc
+    }, {})
+
+    aggregated.forEach(item => {
+      const mapped = mapKpiTrendRow(item)
+      KPI_TREND_OPTIONS.forEach(key => {
+        totals[key] += mapped[key]
+      })
+    })
+
+    const count = aggregated.length
+    return KPI_TREND_OPTIONS.reduce((acc, key) => {
+      acc[key] = count > 0 ? roundGraphValue(totals[key] / count) : 0
+      return acc
+    }, {})
+  }
+
+  const buildKpiSevenDayComparisonData = (hubRows, selectedCategory) => {
+    const latestDateString = getMaxDateString(hubRows.map(item => String(item.date || '').split('T')[0]))
+    if (!latestDateString) return []
+
+    const lastRange = getRangeBounds('L7D', latestDateString)
+    const priorRange = getRangeBounds('P7D', latestDateString)
+
+    const lastAggregated = aggregateKpiRowsByDate(hubRows.filter(item => {
+      const itemDate = String(item.date || '').split('T')[0]
+      return itemDate >= lastRange.start && itemDate <= lastRange.end
+    }))
+
+    const priorAggregated = aggregateKpiRowsByDate(hubRows.filter(item => {
+      const itemDate = String(item.date || '').split('T')[0]
+      return itemDate >= priorRange.start && itemDate <= priorRange.end
+    }))
+
+    const priorByIndex = new Map(priorAggregated.map((item, index) => [index, mapKpiTrendRow(item)]))
+    const currentLabel = formatShortRangeLabel(lastRange.start, lastRange.end)
+    const priorLabel = formatShortRangeLabel(priorRange.start, priorRange.end)
+
+    return lastAggregated.map((item, originalIndex) => {
+      const current = mapKpiTrendRow(item)
+      const prior = priorByIndex.get(originalIndex) || {}
+      const date = parseDateString(item.date)
+      return {
+        month: date ? date.toLocaleDateString('en-US', { weekday: 'short' }) : item.date,
+        currentPeriod: current[selectedCategory] || 0,
+        priorPeriod: prior[selectedCategory] || 0,
+        currentLabel,
+        priorLabel
+      }
+    })
+  }
+
+  const buildKpiGraphComparisonData = (hubRows, selectedCategory) => {
+    const dates = hubRows.map(item => String(item.date || '').split('T')[0]).filter(Boolean)
+    if (!dates.length) return []
+
+    const latestDate = new Date(dates.reduce((latest, current) => current > latest ? current : latest, dates[0]))
+    const l7dStart = new Date(latestDate)
+    l7dStart.setDate(latestDate.getDate() - 6)
+    const l7dEnd = new Date(latestDate)
+
+    const p7dEnd = new Date(l7dStart)
+    p7dEnd.setDate(p7dEnd.getDate() - 1)
+    const p7dStart = new Date(p7dEnd)
+    p7dStart.setDate(p7dEnd.getDate() - 6)
+
+    const mtdStart = new Date(latestDate.getFullYear(), latestDate.getMonth(), 1)
+
+    const formatLocalDate = (date) => {
+      const pad = (value) => String(value).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    }
+
+    const calculateAverage = (startDate, endDate) => {
+      const filtered = hubRows.filter(item => {
+        const itemDate = String(item.date || '').split('T')[0]
+        return itemDate >= startDate && itemDate <= endDate
+      })
+      if (!filtered.length) return null
+      return calculateKpiPeriodAverages(filtered)
+    }
+
+    const l7dAvg = calculateAverage(formatLocalDate(l7dStart), formatLocalDate(l7dEnd))
+    const p7dAvg = calculateAverage(formatLocalDate(p7dStart), formatLocalDate(p7dEnd))
+    const mtdAvg = calculateAverage(formatLocalDate(mtdStart), formatLocalDate(latestDate))
+
+    const result = []
+    if (l7dAvg) result.push({ period: 'Last 7 Days', selectedValue: l7dAvg[selectedCategory] || 0, ...l7dAvg })
+    if (p7dAvg) result.push({ period: 'Prior 7 Days', selectedValue: p7dAvg[selectedCategory] || 0, ...p7dAvg })
+    if (mtdAvg) result.push({ period: 'Month to Date', selectedValue: mtdAvg[selectedCategory] || 0, ...mtdAvg })
+    return result
+  }
+
   const formatShortRangeLabel = (startDate, endDate) => {
     const formatPart = (dateStr) => {
       const date = parseDateString(dateStr)
@@ -691,7 +895,7 @@ function Dashboard() {
     }
   }
 
-  const getHubMetricDateRange = ({ selectedHub, hubFromDate, hubToDate, selectedDate, hubDeliveryTrendRange }) => {
+  const getHubMetricDateRange = ({ selectedHub, hubFromDate, hubToDate, selectedDate, hubDeliveryTrendRange, metricRows }) => {
     if (hubFromDate && hubToDate) {
       return { start: hubFromDate, end: hubToDate }
     }
@@ -701,9 +905,12 @@ function Dashboard() {
     }
 
     if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
+      const rows = Array.isArray(metricRows) ? metricRows : dashboardMetrics
       const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
-      const hubMetrics = dashboardMetrics.filter(item => String(item.hub || '').trim().toLowerCase() === selectedHubNorm)
-      const latestMetricDate = getMaxDateString(hubMetrics.map(item => item.date?.split('T')[0] || item.date))
+      const filteredRows = selectedHub
+        ? rows.filter(item => String((item.operator_hub || item.hub || '')).trim().toLowerCase() === selectedHubNorm)
+        : rows
+      const latestMetricDate = getMaxDateString(filteredRows.map(item => item.date?.split('T')[0] || item.date))
       if (!latestMetricDate) {
         return null
       }
@@ -718,6 +925,28 @@ function Dashboard() {
     setTimeout(() => setMessage({ type: '', text: '' }), 5000)
   }
 
+  const KPI_TREND_OPTIONS = [
+    'Scorecard',
+    'LM Clear Floor Rate Ach %',
+    'Delivery Success Rate Actual',
+    'Line Haul Pick-up Compliance Ach %',
+    'COD Compliance Ach %',
+    'Process Compliance Ach %',
+    'RTS % Ach %',
+    'Loss % Ach %',
+    'Expedite Delivery Performance Ach %'
+  ]
+
+  const PERFORMANCE_TREND_OPTIONS = [
+    'Cost Per Parcel',
+    'Delivered Ado',
+    'Dispatched Ado',
+    'Success Rate',
+    'Delivered Prod',
+    'Assigned Prod',
+    'Fleet Count'
+  ]
+
   const roundGraphValue = (value) => {
     const numeric = Number(value)
     return Number.isFinite(numeric) ? Math.round(numeric) : 0
@@ -725,7 +954,21 @@ function Dashboard() {
 
   const formatGraphValue = (value, metric) => {
     const rounded = roundGraphValue(value)
-    return metric === 'Success Rate' ? `${rounded}%` : rounded
+    const percentMetrics = [
+      'Success Rate',
+      'Scorecard',
+      'LM Clear Floor Rate Ach %',
+      'Delivery Success Rate Actual',
+      'Line Haul Pick-up Compliance Ach %',
+      'COD Compliance Ach %',
+      'Process Compliance Ach %',
+      'RTS % Ach %',
+      'Loss % Ach %'
+    ]
+    if (percentMetrics.includes(metric) || String(metric).includes('%')) {
+      return `${rounded}%`
+    }
+    return rounded
   }
 
   const formatDeliveryTrendTooltip = (value) => {
@@ -1029,6 +1272,24 @@ function Dashboard() {
     }
   }, [isRefreshing, processPerformanceChartData])
 
+  useEffect(() => {
+    if (dashboardView === 'hub' && hubViewMode === 'kpi' && kpiData.length === 0) {
+      const loadKpiTabData = async () => {
+        try {
+          const { data, error } = await getKpiRecords()
+          if (!error && data) {
+            setKpiData(data)
+            setUniqueRegions([...new Set(data.map(item => item.sub_region).filter(Boolean))])
+          }
+        } catch (err) {
+          console.error('Error loading KPI records for KPI tab:', err)
+        }
+      }
+
+      loadKpiTabData()
+    }
+  }, [dashboardView, hubViewMode, kpiData.length])
+
   // Filter data based on selections
   const filteredHubPerformance = useMemo(() => {
     let result = hubPerformance
@@ -1041,9 +1302,11 @@ function Dashboard() {
   // Get unique hubs for filter - from dashboard_metrics and performance records
   const uniqueHubs = useMemo(() => {
     const metricHubs = dashboardMetrics.map(item => item.hub).filter(Boolean)
-    const performanceHubs = performanceRecords.map(item => item.hub).filter(Boolean)
-    return [...new Set([...metricHubs, ...performanceHubs])].sort()
-  }, [dashboardMetrics, performanceRecords])
+    const dataHubs = (hubViewMode === 'kpi' ? kpiData : performanceRecords)
+      .map(item => String(hubViewMode === 'kpi' ? item.operator_hub || item.hub : item.hub || '').trim())
+      .filter(Boolean)
+    return [...new Set([...metricHubs, ...dataHubs])].sort()
+  }, [dashboardMetrics, performanceRecords, kpiData, hubViewMode])
 
   // Filter hubs based on search term
   const filteredHubs = useMemo(() => {
@@ -1070,20 +1333,21 @@ function Dashboard() {
   const assignedHubsForSelectedCluster = useMemo(() => {
     if (!selectedCluster) return []
     const clusterNorm = selectedCluster.trim().toLowerCase()
+    const sourceRecords = hubViewMode === 'kpi' ? kpiData : performanceRecords
 
-    const derived = performanceRecords
+    const derived = sourceRecords
       .filter(r => {
         const clusterValue = String(r.clustering || r.cluster || '').trim().toLowerCase()
-        return clusterValue === clusterNorm && r.hub
+        return clusterValue === clusterNorm && (r.operator_hub || r.hub)
       })
-      .map(r => String(r.hub).trim())
+      .map(r => String(r.operator_hub || r.hub || '').trim())
 
     const uniqueDerived = [...new Set(derived)]
     if (uniqueDerived.length > 0) return uniqueDerived.sort((a, b) => a.localeCompare(b))
 
     const fromMap = clusterLeaderHubMap[selectedCluster] || []
     return Array.isArray(fromMap) ? fromMap.slice().sort((a, b) => a.localeCompare(b)) : []
-  }, [selectedCluster, clusterLeaderHubMap, performanceRecords])
+  }, [selectedCluster, clusterLeaderHubMap, performanceRecords, kpiData, hubViewMode])
 
   const hubDropdownOptions = useMemo(() => {
     // If a cluster is selected, limit hub dropdown to hubs assigned to that cluster leader
@@ -1392,7 +1656,8 @@ function Dashboard() {
           hubFromDate,
           hubToDate,
           selectedDate,
-          hubDeliveryTrendRange
+          hubDeliveryTrendRange,
+          metricRows: hubViewMode === 'kpi' ? kpiData : dashboardMetrics
         })
         if (metricRange && metricRange.start && metricRange.end) {
           filteredPerformance = filteredPerformance.filter(p => {
@@ -1771,6 +2036,153 @@ const filteredChartData = useMemo(() => {
   // For overall view with cluster leader selected, continue with data calculation
   // Don't return early - let the calculation proceed
 
+  const parseNumeric = (value) => {
+    if (value === null || value === undefined || value === '') return 0
+    const numberValue = Number(String(value).replace(/%/g, '').trim())
+    return Number.isFinite(numberValue) ? numberValue : 0
+  }
+
+  const getKpiMetricChartData = () => {
+    const hubFiltersPresent = Boolean(
+      (selectedHub && selectedHub !== 'All Hubs') ||
+      hubFromDate || hubToDate ||
+      (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') ||
+      selectedDate ||
+      hubCompareDateA || hubCompareDateB
+    )
+
+    if (dashboardView === 'hub' && !hubFiltersPresent) {
+      return []
+    }
+
+    let filtered = Array.isArray(kpiData) ? kpiData.slice() : []
+    const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
+    const normalizeHubValue = (value) => String(value || '').trim().toLowerCase()
+
+    if (dashboardView === 'hub' && selectedCluster) {
+      const assigned = assignedHubsForSelectedCluster
+      const assignedNorm = new Set((assigned || []).map(a => normalizeHubValue(a)))
+      filtered = filtered.filter(item => assignedNorm.has(normalizeHubValue(item.operator_hub || item.hub)))
+    }
+
+    if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs') {
+      filtered = filtered.filter(item => normalizeHubValue(item.operator_hub || item.hub) === selectedHubNorm)
+    }
+
+    const filterByDate = (itemDate) => {
+      if (!itemDate) return false
+      const date = String(itemDate).split('T')[0] || String(itemDate)
+      if (hubFromDate && hubToDate) {
+        return date >= hubFromDate && date <= hubToDate
+      }
+      if (selectedDate) {
+        return date === selectedDate
+      }
+      if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
+        const metricRange = getHubMetricDateRange({
+          selectedHub,
+          hubFromDate,
+          hubToDate,
+          selectedDate,
+          hubDeliveryTrendRange,
+          metricRows: kpiData
+        })
+        if (!metricRange) return false
+        return date >= metricRange.start && date <= metricRange.end
+      }
+      return true
+    }
+
+    filtered = filtered.filter(item => filterByDate(item.date))
+
+    const aggregates = {}
+    filtered.forEach(item => {
+      const date = String(item.date || '').split('T')[0] || item.date
+      if (!date) return
+
+      if (!aggregates[date]) {
+        aggregates[date] = {
+          date,
+          count: 0,
+          score: 0,
+          scoreCount: 0,
+          cfr: 0,
+          cfrCount: 0,
+          sr: 0,
+          srCount: 0,
+          line_haul_compliance: 0,
+          lineHaulCount: 0,
+          cod_remittance: 0,
+          codCount: 0,
+          eod_compliance: 0,
+          eodCount: 0,
+          rts: 0,
+          rtsCount: 0,
+          loss: 0,
+          lossCount: 0,
+          expedite: 0,
+          expediteCount: 0
+        }
+      }
+
+      const entry = aggregates[date]
+      if (item.score !== undefined && item.score !== null) {
+        entry.score += parseNumeric(item.score)
+        entry.scoreCount += 1
+      }
+      if (item.cfr !== undefined && item.cfr !== null) {
+        entry.cfr += parseNumeric(item.cfr)
+        entry.cfrCount += 1
+      }
+      if (item.sr !== undefined && item.sr !== null) {
+        entry.sr += parseNumeric(item.sr)
+        entry.srCount += 1
+      }
+      if (item.line_haul_compliance !== undefined && item.line_haul_compliance !== null) {
+        entry.line_haul_compliance += parseNumeric(item.line_haul_compliance)
+        entry.lineHaulCount += 1
+      }
+      if (item.cod_remittance !== undefined && item.cod_remittance !== null) {
+        entry.cod_remittance += parseNumeric(item.cod_remittance)
+        entry.codCount += 1
+      }
+      if (item.eod_compliance !== undefined && item.eod_compliance !== null) {
+        entry.eod_compliance += parseNumeric(item.eod_compliance)
+        entry.eodCount += 1
+      }
+      if (item.rts !== undefined && item.rts !== null) {
+        entry.rts += parseNumeric(item.rts)
+        entry.rtsCount += 1
+      }
+      if (item.loss !== undefined && item.loss !== null) {
+        entry.loss += parseNumeric(item.loss)
+        entry.lossCount += 1
+      }
+      const expediteValue = parseNumeric(item['Expedite Delivery Performance Ach %'] ?? item['Expedite Delivery Performance Ach Percent'] ?? item['Expedite Delivery Performance'])
+      if (expediteValue) {
+        entry.expedite += expediteValue
+        entry.expediteCount += 1
+      }
+      entry.count += 1
+    })
+
+    return Object.values(aggregates)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      .map(item => ({
+        month: item.date?.slice(5) || item.date,
+        date: item.date,
+        'Scorecard': item.scoreCount > 0 ? roundGraphValue(item.score / item.scoreCount) : 0,
+        'LM Clear Floor Rate Ach %': item.cfrCount > 0 ? roundGraphValue(item.cfr / item.cfrCount) : 0,
+        'Delivery Success Rate Actual': item.srCount > 0 ? roundGraphValue(item.sr / item.srCount) : 0,
+        'Line Haul Pick-up Compliance Ach %': item.lineHaulCount > 0 ? roundGraphValue(item.line_haul_compliance / item.lineHaulCount) : 0,
+        'COD Compliance Ach %': item.codCount > 0 ? roundGraphValue(item.cod_remittance / item.codCount) : 0,
+        'Process Compliance Ach %': item.eodCount > 0 ? roundGraphValue(item.eod_compliance / item.eodCount) : 0,
+        'RTS % Ach %': item.rtsCount > 0 ? roundGraphValue(item.rts / item.rtsCount) : 0,
+        'Loss % Ach %': item.lossCount > 0 ? roundGraphValue(item.loss / item.lossCount) : 0,
+        'Expedite Delivery Performance Ach %': item.expediteCount > 0 ? roundGraphValue(item.expedite / item.expediteCount) : 0
+      }))
+  }
+
   const getDashboardMetricChartData = () => {
     console.log('getDashboardMetricChartData called with dashboardMetrics:', dashboardMetrics?.length || 0, 'rows')
     
@@ -1967,7 +2379,7 @@ const filteredChartData = useMemo(() => {
 
     if (!hasHubFilters) return []
 
-    return getDashboardMetricChartData()
+    return hubViewMode === 'kpi' ? getKpiMetricChartData() : getDashboardMetricChartData()
   }
   if (dashboardView === 'overall' && selectedCluster) {
     const assignedHubs = assignedHubsForSelectedCluster
@@ -2171,10 +2583,10 @@ const chartDomain = useMemo(() => {
     : deliveryTrendChartData.map(item => Number(item.selectedValue) || 0)
   const maxValue = Math.max(...values, 0)
 
-  // Percentage-like metrics should be capped at 100
-  if (['Success Rate', 'Assigned Prod'].includes(selectedCategory)) {
-    // For percentage metrics, cap axis at 100
-    return [0, 100]
+  // Percentage-like metrics should be capped at 100, with top padding for labels
+  if (['Success Rate', 'Assigned Prod', ...KPI_TREND_OPTIONS].includes(selectedCategory)) {
+    // For percentage metrics, keep bars below the top edge
+    return [0, 110]
   }
 
   const targetValue = Number(targets[selectedCategory])
@@ -2210,9 +2622,26 @@ const yTicks = useMemo(() => {
 
 const hubSevenDayComparisonData = useMemo(() => {
   const hasHubFilter = selectedCluster || (selectedHub && selectedHub !== 'All Hubs')
-  if (dashboardView !== 'hub' || !hasHubFilter || !dashboardMetrics?.length) {
+  if (dashboardView !== 'hub' || !hasHubFilter) {
     return []
   }
+
+  if (hubViewMode === 'kpi') {
+    let hubRows = []
+    if (selectedCluster) {
+      const assigned = assignedHubsForSelectedCluster
+      const assignedNorm = new Set((assigned || []).map(a => String(a).trim().toLowerCase()))
+      hubRows = kpiData.filter(item => assignedNorm.has(String(item.operator_hub || item.hub || '').trim().toLowerCase()))
+    } else {
+      const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
+      hubRows = kpiData.filter(item => String(item.operator_hub || item.hub || '').trim().toLowerCase() === selectedHubNorm)
+    }
+
+    if (!hubRows.length) return []
+    return buildKpiSevenDayComparisonData(hubRows, selectedCategory)
+  }
+
+  if (!dashboardMetrics?.length) return []
 
   let hubRows = []
   if (selectedCluster) {
@@ -2320,7 +2749,7 @@ const hubSevenDayComparisonData = useMemo(() => {
         priorLabel
       }
     })
-}, [dashboardMetrics, selectedHub, dashboardView, selectedCategory])
+}, [dashboardMetrics, kpiData, selectedHub, dashboardView, selectedCluster, selectedCategory, hubViewMode, assignedHubsForSelectedCluster])
 
 const hubSevenDayComparisonDomain = useMemo(() => {
   if (!hubSevenDayComparisonData.length) return [0, 'auto']
@@ -2329,8 +2758,8 @@ const hubSevenDayComparisonDomain = useMemo(() => {
     Number(item.priorPeriod) || 0
   ])
   const maxValue = Math.max(...values, 0)
-  // If comparison is for percentage-like metrics, cap at 100
-  if (['Success Rate', 'Assigned Prod'].includes(selectedCategory)) return [0, 100]
+  // If comparison is for percentage-like metrics, cap at 100 with extra top padding
+  if (['Success Rate', 'Assigned Prod', ...KPI_TREND_OPTIONS].includes(selectedCategory)) return [0, 110]
   const targetValue = Number(targets[selectedCategory])
   const topValue = Number.isFinite(targetValue) ? Math.max(maxValue, targetValue) : maxValue
   return [0, Math.max(10, Math.ceil(topValue * 1.2))]
@@ -2346,7 +2775,26 @@ const hubYTicks = useMemo(() => {
 // Calculate hub level period comparison data for Graph Comparison
 const hubLevelGraphComparison = useMemo(() => {
   const hasHubFilter = selectedCluster || (selectedHub && selectedHub !== 'All Hubs')
-  if (dashboardView !== 'hub' || !hasHubFilter || !dashboardMetrics || dashboardMetrics.length === 0) {
+  if (dashboardView !== 'hub' || !hasHubFilter) {
+    return []
+  }
+
+  if (hubViewMode === 'kpi') {
+    let hubRows = []
+    if (selectedCluster) {
+      const assigned = assignedHubsForSelectedCluster
+      const assignedNorm = new Set((assigned || []).map(a => String(a).trim().toLowerCase()))
+      hubRows = kpiData.filter(item => assignedNorm.has(String(item.operator_hub || item.hub || '').trim().toLowerCase()))
+    } else {
+      const selectedHubNorm = String(selectedHub || '').trim().toLowerCase()
+      hubRows = kpiData.filter(item => String(item.operator_hub || item.hub || '').trim().toLowerCase() === selectedHubNorm)
+    }
+
+    if (hubRows.length === 0) return []
+    return buildKpiGraphComparisonData(hubRows, selectedCategory)
+  }
+
+  if (!dashboardMetrics || dashboardMetrics.length === 0) {
     return []
   }
 
@@ -2468,7 +2916,7 @@ const hubLevelGraphComparison = useMemo(() => {
   if (mtdAvg) result.push({ period: 'Month to Date', ...mtdAvg })
 
   return result
-}, [dashboardMetrics, selectedHub, dashboardView])
+}, [dashboardMetrics, kpiData, selectedHub, dashboardView, selectedCluster, selectedCategory, hubViewMode, assignedHubsForSelectedCluster])
 
 const hubLevelGraphComparisonChartData = useMemo(() => {
   return hubLevelGraphComparison.map(item => ({
@@ -2485,7 +2933,7 @@ const hubLevelGraphComparisonDomain = useMemo(() => {
     return [v]
   })
   const maxValue = Math.max(...values, 0)
-  if (['Success Rate', 'Assigned Prod'].includes(selectedCategory)) return [0, 100]
+  if (['Success Rate', 'Assigned Prod', ...KPI_TREND_OPTIONS].includes(selectedCategory)) return [0, 100]
   const targetValue = Number(targets[selectedCategory])
   const topValue = Number.isFinite(targetValue) ? Math.max(maxValue, targetValue) : maxValue
   return [0, Math.max(10, Math.ceil(topValue * 1.2))]
@@ -2498,10 +2946,17 @@ const hubLevelYTicks = useMemo(() => {
 }, [hubLevelGraphComparisonDomain, selectedCategory, targets])
 
 const getHubSevenDayComparisonDataForHub = useCallback((hubName) => {
-  if (!hubName || !dashboardMetrics?.length) return []
+  if (!hubName) return []
   const normalizeHub = (value) => String(value || '').trim().toLowerCase()
   const hubNorm = normalizeHub(hubName)
 
+  if (hubViewMode === 'kpi') {
+    const hubRows = kpiData.filter(item => normalizeHub(item.operator_hub || item.hub) === hubNorm)
+    if (!hubRows.length) return []
+    return buildKpiSevenDayComparisonData(hubRows, selectedCategory)
+  }
+
+  if (!dashboardMetrics?.length) return []
   const hubRows = dashboardMetrics.filter(item => normalizeHub(item.hub) === hubNorm)
   const latestDateString = getMaxDateString(hubRows.map(item => item.date?.split('T')[0] || item.date))
   if (!latestDateString) return []
@@ -2601,13 +3056,20 @@ const getHubSevenDayComparisonDataForHub = useCallback((hubName) => {
       priorLabel: current.priorLabel
     }
   })
-}, [dashboardMetrics, selectedCategory])
+}, [dashboardMetrics, kpiData, selectedCategory, hubViewMode])
 
 const getHubLevelGraphComparisonForHub = useCallback((hubName) => {
-  if (!hubName || !dashboardMetrics?.length) return []
+  if (!hubName) return []
   const normalizeHub = (value) => String(value || '').trim().toLowerCase()
   const hubNorm = normalizeHub(hubName)
 
+  if (hubViewMode === 'kpi') {
+    const hubRows = kpiData.filter(item => normalizeHub(item.operator_hub || item.hub) === hubNorm)
+    if (!hubRows.length) return []
+    return buildKpiGraphComparisonData(hubRows, selectedCategory)
+  }
+
+  if (!dashboardMetrics?.length) return []
   const hubData = dashboardMetrics.filter(item => normalizeHub(item.hub) === hubNorm)
   if (!hubData.length) return []
 
@@ -2699,7 +3161,7 @@ const getHubLevelGraphComparisonForHub = useCallback((hubName) => {
   if (mtdAvg) result.push({ period: 'Month to Date', selectedValue: mtdAvg[selectedCategory] || 0, ...mtdAvg })
 
   return result
-}, [dashboardMetrics, selectedCategory])
+}, [dashboardMetrics, kpiData, selectedCategory, hubViewMode])
 
 const clusterHubSections = useMemo(() => {
   if (dashboardView !== 'hub' || !selectedCluster) return []
@@ -3239,7 +3701,7 @@ const clusterHubSections = useMemo(() => {
       }
       
       if (dashboardView === 'hub') {
-        reportTitle = 'Hub Level Dashboard'
+        reportTitle = hubViewMode === 'kpi' ? 'KPI Dashboard' : 'Performance Dashboard'
         filterInfo = [
           `Hub: ${selectedHub || 'All Hubs'}`,
           `From: ${hubFromDate || ''}    To: ${hubToDate || ''}`,
@@ -3911,7 +4373,7 @@ const clusterHubSections = useMemo(() => {
 
       // Download the PDF
       const filename = dashboardView === 'hub' 
-        ? `hub-level-dashboard-${selectedHub || 'all'}-${new Date().toISOString().split('T')[0]}.pdf`
+        ? `${hubViewMode === 'kpi' ? 'kpi' : 'performance'}-dashboard-${selectedHub || 'all'}-${new Date().toISOString().split('T')[0]}.pdf`
         : dashboardView === 'rider'
           ? (selectedRider 
             ? `rider-dashboard-${riderLevelData[0]?.riderName || selectedRider}-${new Date().toISOString().split('T')[0]}.pdf`
@@ -3970,17 +4432,40 @@ const clusterHubSections = useMemo(() => {
       {/* View Toggle */}
       <div className="bg-[hsl(220,20%,14%)] rounded-[14px] p-2 border border-[hsl(220,13%,30%)]">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
             <button
-              onClick={() => setDashboardView('hub')}
+              onClick={() => {
+                setDashboardView('hub')
+                setHubViewMode('performance')
+                if (!PERFORMANCE_TREND_OPTIONS.includes(selectedCategory)) {
+                  setSelectedCategory(PERFORMANCE_TREND_OPTIONS[0])
+                }
+              }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-[11px] font-medium transition-all duration-180 ${
-                dashboardView === 'hub'
+                dashboardView === 'hub' && hubViewMode === 'performance'
                   ? 'bg-[hsl(0,58%,42%)] text-white shadow-[0_2px_8px_rgba(0,0,0,0.05)]'
                   : 'text-[hsl(220,8%,55%)] hover:text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)]'
               }`}
             >
               <Building2 className="w-3.5 h-3.5" />
-              Hub Level
+              Performance
+            </button>
+            <button
+              onClick={() => {
+                setDashboardView('hub')
+                setHubViewMode('kpi')
+                if (!KPI_TREND_OPTIONS.includes(selectedCategory)) {
+                  setSelectedCategory(KPI_TREND_OPTIONS[0])
+                }
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-[11px] font-medium transition-all duration-180 ${
+                dashboardView === 'hub' && hubViewMode === 'kpi'
+                  ? 'bg-[hsl(0,58%,42%)] text-white shadow-[0_2px_8px_rgba(0,0,0,0.05)]'
+                  : 'text-[hsl(220,8%,55%)] hover:text-[hsl(220,15%,95%)] hover:bg-[hsl(220,18%,18%)]'
+              }`}
+            >
+              <Target className="w-3.5 h-3.5" />
+              KPI
             </button>
           </div>
           <button
@@ -4348,7 +4833,8 @@ const clusterHubSections = useMemo(() => {
                 hubFromDate,
                 hubToDate,
                 selectedDate,
-                hubDeliveryTrendRange
+                hubDeliveryTrendRange,
+                metricRows: hubViewMode === 'kpi' ? kpi : metrics
               })
 
               if (metricRange && metricRange.start && metricRange.end) {
@@ -4376,8 +4862,9 @@ const clusterHubSections = useMemo(() => {
             let prodSum = 0, prodCount = 0
             let fleetSum = 0, fleetCount = 0
 
-            if (perf.length > 0) {
-              perf.forEach(r => {
+            const activeRecords = hubViewMode === 'kpi' ? kpi : perf
+            if (activeRecords.length > 0) {
+              activeRecords.forEach(r => {
                 const cp = Number(r.cost_per_parcel) || 0
                 if (cp > 0) { costSum += cp; costCount++ }
                 delAdo += Number(r.delivered_ado) || 0
@@ -4403,23 +4890,120 @@ const clusterHubSections = useMemo(() => {
             const costPerParcel = costCount > 0 ? Math.round(costSum / costCount) : 0
             const deliveredAdo = Math.round(delAdo)
             const dispatchedAdo = Math.round(dispAdo)
-            const successRate = Number(filteredStats.successRate) || 0
             const deliveredProd = (perf.length > 0 || metrics.length > 0) ? Math.round(deliveredTotal / Math.max(1, (perf.length || metrics.length))) : 0
             const assignedProd = perf.length > 0 ? Math.round(assignedTotal / Math.max(1, perf.length)) : (prodCount > 0 ? Math.round(prodSum / prodCount) : 0)
             const fleetCountAvg = fleetCount > 0 ? Math.round(fleetSum / fleetCount) : 0
 
+            if (hubViewMode === 'kpi') {
+              let scoreSum = 0, scoreCount = 0
+              let cfrSum = 0, cfrCount = 0
+              let srSum = 0, srCount = 0
+              let lineHaulSum = 0, lineHaulCount = 0
+              let codSum = 0, codCount = 0
+              let eodSum = 0, eodCount = 0
+              let rtsSum = 0, rtsCount = 0
+              let lossSum = 0, lossCount = 0
+              let expediteSum = 0, expediteCount = 0
+
+              kpi.forEach(record => {
+                const scoreValue = parseKpiNumber(record.score)
+                if (record.score !== undefined && record.score !== null && String(record.score).trim() !== '') {
+                  scoreSum += scoreValue
+                  scoreCount += 1
+                }
+                const cfrValue = parseKpiNumber(record.cfr)
+                if (record.cfr !== undefined && record.cfr !== null && String(record.cfr).trim() !== '') {
+                  cfrSum += cfrValue
+                  cfrCount += 1
+                }
+                const srValue = parseKpiNumber(record.sr)
+                if (record.sr !== undefined && record.sr !== null && String(record.sr).trim() !== '') {
+                  srSum += srValue
+                  srCount += 1
+                }
+                const lineHaulValue = parseKpiNumber(record.line_haul_compliance)
+                if (record.line_haul_compliance !== undefined && record.line_haul_compliance !== null && String(record.line_haul_compliance).trim() !== '') {
+                  lineHaulSum += lineHaulValue
+                  lineHaulCount += 1
+                }
+                const codValue = parseKpiNumber(record.cod_remittance)
+                if (record.cod_remittance !== undefined && record.cod_remittance !== null && String(record.cod_remittance).trim() !== '') {
+                  codSum += codValue
+                  codCount += 1
+                }
+                const eodValue = parseKpiNumber(record.eod_compliance)
+                if (record.eod_compliance !== undefined && record.eod_compliance !== null && String(record.eod_compliance).trim() !== '') {
+                  eodSum += eodValue
+                  eodCount += 1
+                }
+                const rtsValue = parseKpiNumber(record.rts)
+                if (record.rts !== undefined && record.rts !== null && String(record.rts).trim() !== '') {
+                  rtsSum += rtsValue
+                  rtsCount += 1
+                }
+                const lossValue = parseKpiNumber(record.loss)
+                if (record.loss !== undefined && record.loss !== null && String(record.loss).trim() !== '') {
+                  lossSum += lossValue
+                  lossCount += 1
+                }
+                const expediteValue = parseKpiNumber(record['Expedite Delivery Performance Ach %'] ?? record['Expedite Delivery Performance Ach Percent'] ?? record['Expedite Delivery Performance'] ?? record.expedite)
+                if ((record['Expedite Delivery Performance Ach %'] !== undefined && record['Expedite Delivery Performance Ach %'] !== null && String(record['Expedite Delivery Performance Ach %']).trim() !== '') ||
+                    (record['Expedite Delivery Performance Ach Percent'] !== undefined && record['Expedite Delivery Performance Ach Percent'] !== null && String(record['Expedite Delivery Performance Ach Percent']).trim() !== '') ||
+                    (record['Expedite Delivery Performance'] !== undefined && record['Expedite Delivery Performance'] !== null && String(record['Expedite Delivery Performance']).trim() !== '') ||
+                    (record.expedite !== undefined && record.expedite !== null && String(record.expedite).trim() !== '')) {
+                  expediteSum += expediteValue
+                  expediteCount += 1
+                }
+              })
+
+              return {
+                scorecard: scoreCount > 0 ? roundGraphValue(scoreSum / scoreCount) : 0,
+                clearFloorRate: cfrCount > 0 ? roundGraphValue(cfrSum / cfrCount) : 0,
+                successRate: srCount > 0 ? roundGraphValue(srSum / srCount) : 0,
+                lineHaulCompliance: lineHaulCount > 0 ? roundGraphValue(lineHaulSum / lineHaulCount) : 0,
+                codCompliance: codCount > 0 ? roundGraphValue(codSum / codCount) : 0,
+                processCompliance: eodCount > 0 ? roundGraphValue(eodSum / eodCount) : 0,
+                rts: rtsCount > 0 ? roundGraphValue(rtsSum / rtsCount) : 0,
+                loss: lossCount > 0 ? roundGraphValue(lossSum / lossCount) : 0,
+                expedite: expediteCount > 0 ? roundGraphValue(expediteSum / expediteCount) : 0,
+                costPerParcel,
+                deliveredAdo,
+                dispatchedAdo,
+                deliveredProd,
+                assignedProd,
+                fleetCount: fleetCountAvg
+              }
+            }
+
+            const successRate = Number(filteredStats.successRate) || 0
             return { costPerParcel, deliveredAdo, dispatchedAdo, successRate, deliveredProd, assignedProd, fleetCount: fleetCountAvg }
           })()
 
           return (
             <div className="flex gap-2">
-              <CompactStatCard title="Cost Per Parcel" value={hubLevelTopKpis.costPerParcel?.toString() || '0'} icon={Package} accentColor="bg-emerald-600" />
-              <CompactStatCard title="Delivered Ado" value={hubLevelTopKpis.deliveredAdo?.toString() || '0'} icon={CheckCircle} accentColor="bg-maroon-500" />
-              <CompactStatCard title="Dispatched Ado" value={hubLevelTopKpis.dispatchedAdo?.toString() || '0'} icon={Zap} accentColor="bg-orange-500" />
-              <CompactStatCard title="Success Rate" value={`${hubLevelTopKpis.successRate || 0}%`} icon={CheckCircle} accentColor="bg-green-600" />
-              <CompactStatCard title="Delivered Prod" value={hubLevelTopKpis.deliveredProd?.toString() || '0'} icon={Package} accentColor="bg-cyan-600" />
-              <CompactStatCard title="Assigned Prod" value={hubLevelTopKpis.assignedProd?.toString() || '0'} icon={TrendingUp} accentColor="bg-blue-600" />
-              <CompactStatCard title="Fleet Count" value={hubLevelTopKpis.fleetCount?.toString() || '0'} icon={Users} accentColor="bg-purple-600" />
+              {hubViewMode === 'kpi' ? (
+                <>
+                  <CompactStatCard title="Scorecard" value={`${hubLevelTopKpis.scorecard || 0}%`} icon={CheckCircle} accentColor="bg-cyan-600" />
+                  <CompactStatCard title="Clear Floor" value={`${hubLevelTopKpis.clearFloorRate || 0}%`} icon={Package} accentColor="bg-emerald-600" />
+                  <CompactStatCard title="Success Rate" value={`${hubLevelTopKpis.successRate || 0}%`} icon={Zap} accentColor="bg-green-600" />
+                  <CompactStatCard title="Line Haul" value={`${hubLevelTopKpis.lineHaulCompliance || 0}%`} icon={TrendingUp} accentColor="bg-blue-600" />
+                  <CompactStatCard title="COD Compliance" value={`${hubLevelTopKpis.codCompliance || 0}%`} icon={Users} accentColor="bg-purple-600" />
+                  <CompactStatCard title="Process Compliance" value={`${hubLevelTopKpis.processCompliance || 0}%`} icon={CheckCircle} accentColor="bg-orange-500" />
+                  <CompactStatCard title="RTS" value={`${hubLevelTopKpis.rts || 0}%`} icon={Zap} accentColor="bg-maroon-500" />
+                  <CompactStatCard title="Loss" value={`${hubLevelTopKpis.loss || 0}%`} icon={AlertTriangle} accentColor="bg-red-600" />
+                  <CompactStatCard title="Expedite" value={`${hubLevelTopKpis.expedite || 0}%`} icon={Sparkles} accentColor="bg-sky-500" />
+                </>
+              ) : (
+                <>
+                  <CompactStatCard title="Cost Per Parcel" value={hubLevelTopKpis.costPerParcel?.toString() || '0'} icon={Package} accentColor="bg-emerald-600" />
+                  <CompactStatCard title="Delivered Ado" value={hubLevelTopKpis.deliveredAdo?.toString() || '0'} icon={CheckCircle} accentColor="bg-maroon-500" />
+                  <CompactStatCard title="Dispatched Ado" value={hubLevelTopKpis.dispatchedAdo?.toString() || '0'} icon={Zap} accentColor="bg-orange-500" />
+                  <CompactStatCard title="Success Rate" value={`${hubLevelTopKpis.successRate || 0}%`} icon={CheckCircle} accentColor="bg-green-600" />
+                  <CompactStatCard title="Delivered Prod" value={hubLevelTopKpis.deliveredProd?.toString() || '0'} icon={Package} accentColor="bg-cyan-600" />
+                  <CompactStatCard title="Assigned Prod" value={hubLevelTopKpis.assignedProd?.toString() || '0'} icon={TrendingUp} accentColor="bg-blue-600" />
+                  <CompactStatCard title="Fleet Count" value={hubLevelTopKpis.fleetCount?.toString() || '0'} icon={Users} accentColor="bg-purple-600" />
+                </>
+              )}
             </div>
           )
         })()}
@@ -4470,13 +5054,9 @@ const clusterHubSections = useMemo(() => {
                   onChange={(e) => setSelectedCategory(e.target.value)}
                   className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
                 >
-                  <option value="Cost Per Parcel">Cost Per Parcel</option>
-                  <option value="Delivered Ado">Delivered Ado</option>
-                  <option value="Dispatched Ado">Dispatched Ado</option>
-                  <option value="Success Rate">Success Rate</option>
-                  <option value="Delivered Prod">Delivered Prod</option>
-                  <option value="Assigned Prod">Assigned Prod</option>
-                  <option value="Fleet Count">Fleet Count</option>
+                  {(hubViewMode === 'kpi' ? KPI_TREND_OPTIONS : PERFORMANCE_TREND_OPTIONS).map(option => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -4748,8 +5328,8 @@ const clusterHubSections = useMemo(() => {
               {clusterHubSections.map(({ hub, sevenDayData, graphData }) => {
                 const graphValues = graphData.flatMap(item => Number(item.selectedValue) || 0)
                 const graphMax = graphValues.length > 0 ? Math.max(...graphValues) : 0
-                const graphDomain = ['Success Rate', 'Assigned Prod'].includes(selectedCategory)
-                  ? [0, 100]
+                const graphDomain = ['Success Rate', 'Assigned Prod', ...KPI_TREND_OPTIONS].includes(selectedCategory)
+                  ? [0, 110]
                   : [0, Math.max(10, Math.ceil(Math.max(graphMax, Number(targets[selectedCategory]) || 0) * 1.2))]
                 const graphTicks = buildTicksWithTarget(
                   graphDomain,
@@ -5007,13 +5587,9 @@ const clusterHubSections = useMemo(() => {
                   onChange={(e) => setSelectedCategory(e.target.value)}
                   className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
                 >
-                  <option value="Cost Per Parcel">Cost Per Parcel</option>
-                  <option value="Delivered Ado">Delivered Ado</option>
-                  <option value="Dispatched Ado">Dispatched Ado</option>
-                  <option value="Success Rate">Success Rate</option>
-                  <option value="Delivered Prod">Delivered Prod</option>
-                  <option value="Assigned Prod">Assigned Prod</option>
-                  <option value="Fleet Count">Fleet Count</option>
+                  {(hubViewMode === 'kpi' ? KPI_TREND_OPTIONS : PERFORMANCE_TREND_OPTIONS).map(option => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
                 </select>
               </div>
               <ResponsiveContainer width="100%" height={380}>

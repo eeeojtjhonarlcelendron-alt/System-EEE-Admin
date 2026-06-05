@@ -2,6 +2,7 @@
 // Replaces Supabase with direct API fetching and in-memory caching
 
 const GOOGLE_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzLPXyqWVoKfSIyCrC2npIwCzHycPC88VAG_v9hJDXLehACxlkiuSlEgo2X0SclBNFhZw/exec'
+const GOOGLE_APPS_SCRIPT_URL_KPI = 'https://script.googleusercontent.com/macros/echo?user_content_key=AUkAhnTABVGGXJNJD432l_j22t4I6swIhbfaxbFeTHThuBHVCK24r8LhJt5UI57FKacKz_fXhohUUNmH_4qjAue_-rjqZ0BCD9DfkpH8Ge05zjtrP-MUkkafZyhURqKQUfGoVhhsa6f7HK1C4u2qzhDo0X7SSC97BpGrLOOevyuMPKTeAU-UUdjgw9A6ZfoYUAUZsT2kZ9DhXNRLClGMJHmRXkgKKotahg_9S1l8jTbcYilhp6Ao7ylL2qrp6HqrNS0xpyNSRR1jMBoSCqUGcBV1oYBYEq0rew&lib=MrcdDGzPSjUf-t6od-II_Fq6F0VeJqtgy'
 
 let cachedData = {
   performance_records: [],
@@ -16,6 +17,10 @@ let cachedData = {
 let isLoading = false
 let loadError = null
 let loadPromise = null
+
+let kpiIsLoading = false
+let kpiLoadError = null
+let kpiLoadPromise = null
 
 function normalizeKey(key) {
   return String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -63,6 +68,13 @@ function formatUtcDate(date) {
   const month = String(date.getUTCMonth() + 1).padStart(2, '0')
   const day = String(date.getUTCDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function addDaysToDate(dateString, days = 1) {
+  const date = new Date(`${dateString}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return null
+  date.setUTCDate(date.getUTCDate() + days)
+  return formatUtcDate(date)
 }
 
 function parseDateValue(value) {
@@ -165,6 +177,64 @@ async function ensureDataLoaded() {
   return initializeDataService()
 }
 
+async function ensureKpiDataLoaded() {
+  if (cachedData.kpi_records.length > 0 || kpiLoadError) {
+    return { data: cachedData.kpi_records, error: kpiLoadError }
+  }
+  return initializeKpiDataService()
+}
+
+export async function initializeKpiDataService() {
+  if (kpiLoadPromise) {
+    console.log('⏳ KPI data service already loading...')
+    return kpiLoadPromise
+  }
+
+  if (cachedData.kpi_records.length > 0) {
+    console.log('✅ KPI data already loaded, skipping re-fetch')
+    return { data: cachedData.kpi_records, error: null }
+  }
+
+  kpiIsLoading = true
+  console.log('🔄 Initializing KPI data service from Google Apps Script...')
+  console.log('📍 KPI Endpoint URL:', GOOGLE_APPS_SCRIPT_URL_KPI)
+
+  kpiLoadPromise = (async () => {
+    try {
+      const response = await fetch(GOOGLE_APPS_SCRIPT_URL_KPI, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      })
+
+      const responseText = await response.text()
+      console.log('📊 KPI response status:', response.status)
+      console.log('📊 KPI response length:', responseText.length)
+
+      if (responseText.includes('<!doctype') || responseText.includes('<html')) {
+        throw new Error('Google Apps Script KPI endpoint returned a Google sign-in page or HTML instead of JSON.')
+      }
+
+      const rawData = JSON.parse(responseText)
+      const kpiRows = getRowsFromPayload(rawData, ['kpi_records', 'kpiRecords', 'kpi'])
+      cachedData.kpi_records = kpiRows.length > 0 ? normalizeKpiRecords(kpiRows.filter(hasNonEmptySheetRow)) : []
+      kpiIsLoading = false
+      kpiLoadError = null
+      console.log(`✅ KPI data loaded (${cachedData.kpi_records.length} records)`)
+      return { data: cachedData.kpi_records, error: null }
+    } catch (err) {
+      console.error('❌ Error initializing KPI data service:', err.message)
+      kpiIsLoading = false
+      kpiLoadError = err
+      return { data: null, error: err }
+    } finally {
+      kpiLoadPromise = null
+    }
+  })()
+
+  return kpiLoadPromise
+}
+
 // Normalize performance records to match existing schema
 function normalizePerformanceRecords(records) {
   return records.map((record, index) => {
@@ -207,25 +277,46 @@ function normalizePerformanceRecords(records) {
 function normalizeKpiRecords(records) {
   return records.map((record, index) => {
     const score = parsePercent(getField(record, ['score', 'Score', 'Scorecard']))
-    return {
+    const subRegion = getField(record, ['sub_region', 'Sub Region', 'Sub-Region']) || ''
+    
+    // Extract region from sub-region if available (e.g., "SOL4 MIMAROPA" -> "MIMAROPA")
+    const region = getField(record, ['region', 'Region', 'REGION']) || (subRegion ? subRegion.split(' ').pop() : '')
+    
+    // Create normalized record with all endpoint fields preserved
+    const normalized = {
       id: index + 1,
       date: parseDateValue(getField(record, ['date', 'Date', 'DATE'])),
-      region: getField(record, ['region', 'Region', 'REGION']) || '',
-      sub_region: getField(record, ['sub_region', 'Sub Region', 'Sub-Region']) || '',
-      operator_hub: getField(record, ['operator_hub', 'Operator Hub', 'hub', 'Hub', 'HUB NAME']) || '',
+      region,
+      sub_region: subRegion,
+      operator_hub: getField(record, ['operator_hub', 'Operator Hub', 'Operator Hubs', 'hub', 'Hub', 'HUB NAME']) || '',
       cluster: getField(record, ['cluster', 'Cluster', 'AREA CLUSTER', 'CLUSTERING', 'Clustering']) || '',
       score,
       grade: getField(record, ['grade', 'Grade']) || '',
       remarks: getField(record, ['remarks', 'Remarks']) || '',
-      cfr: parsePercent(getField(record, ['cfr', 'CFR', 'Clear Floor Rate'])),
-      sr: parsePercent(getField(record, ['sr', 'SR', 'Success Rate'])),
+      cfr: parsePercent(getField(record, ['cfr', 'CFR', 'Clear Floor Rate', 'LM Clear Floor Rate Actual'])),
+      sr: parsePercent(getField(record, ['sr', 'SR', 'Success Rate', 'Delivery Success Rate Actual'])),
       aging_four_days: parsePercent(getField(record, ['aging_four_days', '% Aging >= 4 days', 'Aging Four Days'])),
-      line_haul_compliance: parsePercent(getField(record, ['line_haul_compliance', 'Line Haul Pick-up Compliance'])),
-      cod_remittance: parsePercent(getField(record, ['cod_remittance', 'COD Remittance'])),
-      eod_compliance: parsePercent(getField(record, ['eod_compliance', 'EOD Report Compliance'])),
-      rts: parsePercent(getField(record, ['rts', 'RTS %'])),
-      loss: parsePercent(getField(record, ['loss', 'Loss']))
+      line_haul_compliance: parsePercent(getField(record, ['line_haul_compliance', 'Line Haul Pick-up Compliance', 'Line Haul Pick-up Compliance Actual'])),
+      cod_remittance: parsePercent(getField(record, ['cod_remittance', 'COD Remittance', 'COD Compliance Actual'])),
+      eod_compliance: parsePercent(getField(record, ['eod_compliance', 'EOD Report Compliance', 'Process Compliance Actual'])),
+      rts: parsePercent(getField(record, ['rts', 'RTS %', 'RTS % Actual'])),
+      loss: parsePercent(getField(record, ['loss', 'Loss', 'Loss % Actual']))
     }
+    
+    // Preserve all other endpoint fields, including raw endpoint keys such as `Date` and `Sub-Region`
+    Object.entries(record).forEach(([key, value]) => {
+      if (key.trim() === '') return
+      if (!normalized.hasOwnProperty(key)) {
+        if (key === 'Date') {
+          const parsed = parseDateValue(value)
+          normalized[key] = parsed || value
+        } else {
+          normalized[key] = value
+        }
+      }
+    })
+    
+    return normalized
   })
 }
 
@@ -478,6 +569,9 @@ export async function reloadDataService() {
   isLoading = false
   loadError = null
   loadPromise = null
+  kpiIsLoading = false
+  kpiLoadError = null
+  kpiLoadPromise = null
   return await initializeDataService()
 }
 
@@ -520,10 +614,10 @@ export async function getHubStats() {
 }
 
 export async function getKpiGradeDistribution() {
-  await ensureDataLoaded()
+  await ensureKpiDataLoaded()
   const grades = { A: 10, B: 20, C: 30, D: 20, F: 20 }
   const distribution = Object.entries(grades).map(([name, value]) => ({ name, value }))
-  return { data: distribution, error: loadError }
+  return { data: distribution, error: kpiLoadError }
 }
 
 export async function getAllUniqueHubsAndRegions() {
@@ -575,28 +669,28 @@ export async function getRecentPerformanceRecords(days = 30, filters = {}) {
 }
 
 export async function getKpiRecordsPaginated(page = 0, pageSize = 100, filters = {}) {
-  await ensureDataLoaded()
+  await ensureKpiDataLoaded()
   let filtered = cachedData.kpi_records
   if (filters.region) filtered = filtered.filter(k => k.region === filters.region)
   if (filters.operator_hub) filtered = filtered.filter(k => k.operator_hub === filters.operator_hub)
   const start = page * pageSize
-  return { data: filtered.slice(start, start + pageSize), error: loadError, totalCount: filtered.length }
+  return { data: filtered.slice(start, start + pageSize), error: kpiLoadError, totalCount: filtered.length }
 }
 
 export async function getKpiRecords(filters = {}) {
-  await ensureDataLoaded()
+  await ensureKpiDataLoaded()
   let filtered = cachedData.kpi_records
   if (filters.region) filtered = filtered.filter(k => k.region === filters.region)
   if (filters.operator_hub) filtered = filtered.filter(k => k.operator_hub === filters.operator_hub)
-  return { data: filtered, error: loadError }
+  return { data: filtered, error: kpiLoadError }
 }
 
 export async function getRecentKpiRecords(days = 30, filters = {}) {
-  await ensureDataLoaded()
+  await ensureKpiDataLoaded()
   let filtered = filterByLatestWindow(cachedData.kpi_records, days)
   if (filters.region) filtered = filtered.filter(k => k.region === filters.region)
   if (filters.operator_hub) filtered = filtered.filter(k => k.operator_hub === filters.operator_hub)
-  return { data: filtered, error: loadError }
+  return { data: filtered, error: kpiLoadError }
 }
 
 export async function getRidersPaginated(page = 0, pageSize = 100, filters = {}) {

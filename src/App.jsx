@@ -6,8 +6,9 @@ import Dashboard from './pages/Dashboard'
 import Layout from './components/Layout'
 import Performance from './pages/Performance'
 import Target from './pages/Target'
+import KPI from './pages/KPI'
 // Clustering page removed
-import { initializeDataService } from './lib/data'
+import { initializeDataService, initializeKpiDataService } from './lib/data'
 
 function AppRoutes() {
   const { user, loading, signOut } = useAuth()
@@ -15,9 +16,12 @@ function AppRoutes() {
   // Initialize data service once on app load
   useEffect(() => {
     if (user && !loading) {
-      console.log('🚀 Initializing data service for authenticated user...')
-      initializeDataService().catch(err => {
-        console.error('❌ Failed to initialize data service:', err)
+      console.log('🚀 Initializing data services for authenticated user...')
+      Promise.all([
+        initializeDataService(),
+        initializeKpiDataService()
+      ]).catch(err => {
+        console.error('❌ Failed to initialize data services:', err)
       })
     }
   }, [user, loading])
@@ -52,7 +56,7 @@ function AppRoutes() {
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="data-management/performance" element={<Performance />} />
         <Route path="data-management/target" element={<Target />} />
-        <Route path="data-management/kpi" element={<Navigate to="/dashboard" replace />} />
+        <Route path="data-management/kpi" element={<KPI />} />
         <Route path="data-management/rider" element={<Navigate to="/dashboard" replace />} />
         {/* Clustering route removed */}
       </Route>

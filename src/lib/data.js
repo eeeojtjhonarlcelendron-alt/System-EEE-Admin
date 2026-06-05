@@ -4,6 +4,7 @@
 
 export {
   initializeDataService,
+  initializeKpiDataService,
   populateDashboardMetrics,
   getDashboardMetrics,
   getDashboardStats,
