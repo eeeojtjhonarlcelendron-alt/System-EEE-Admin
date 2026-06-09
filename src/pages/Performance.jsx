@@ -8,7 +8,6 @@ const PERFORMANCE_SHEET_COLUMNS = [
   'DATE',
   'REGION',
   'AREA CLUSTER',
-  'CLUSTERING',
   'HUB NAME',
   'FLEET COUNT',
   'SUCCESS RATE',
@@ -16,7 +15,8 @@ const PERFORMANCE_SHEET_COLUMNS = [
   'DISPATCHED PROD',
   'COST PER PARCEL',
   'DELIVERED ADO',
-  'DISPATCHED ADO'
+  'DISPATCHED ADO',
+  'CLUSTERING'
 ]
 
 const formatSheetNumber = (value) => {

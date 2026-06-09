@@ -293,14 +293,15 @@ function normalizeKpiRecords(records) {
       score,
       grade: getField(record, ['grade', 'Grade']) || '',
       remarks: getField(record, ['remarks', 'Remarks']) || '',
-      cfr: parsePercent(getField(record, ['cfr', 'CFR', 'Clear Floor Rate', 'LM Clear Floor Rate Actual'])),
-      sr: parsePercent(getField(record, ['sr', 'SR', 'Success Rate', 'Delivery Success Rate Actual'])),
+      cfr: parsePercent(getField(record, ['cfr', 'CFR', 'Clear Floor Rate', 'LM Clear Floor Rate Actual', 'LM Clear Floor Rate Ach %'])),
+      sr: parsePercent(getField(record, ['sr', 'SR', 'Success Rate', 'Delivery Success Rate Actual', 'Delivery Success Rate Ach % to get A'])),
       aging_four_days: parsePercent(getField(record, ['aging_four_days', '% Aging >= 4 days', 'Aging Four Days'])),
-      line_haul_compliance: parsePercent(getField(record, ['line_haul_compliance', 'Line Haul Pick-up Compliance', 'Line Haul Pick-up Compliance Actual'])),
-      cod_remittance: parsePercent(getField(record, ['cod_remittance', 'COD Remittance', 'COD Compliance Actual'])),
-      eod_compliance: parsePercent(getField(record, ['eod_compliance', 'EOD Report Compliance', 'Process Compliance Actual'])),
-      rts: parsePercent(getField(record, ['rts', 'RTS %', 'RTS % Actual'])),
-      loss: parsePercent(getField(record, ['loss', 'Loss', 'Loss % Actual']))
+      line_haul_compliance: parsePercent(getField(record, ['line_haul_compliance', 'Line Haul Pick-up Compliance', 'Line Haul Pick-up Compliance Actual', 'Line Haul Pick-up Compliance Ach %'])),
+      cod_remittance: parsePercent(getField(record, ['cod_remittance', 'COD Remittance', 'COD Compliance Actual', 'COD Compliance Ach %'])),
+      eod_compliance: parsePercent(getField(record, ['eod_compliance', 'EOD Report Compliance', 'Process Compliance Actual', 'Process Compliance Ach %'])),
+      rts: parsePercent(getField(record, ['rts', 'RTS % Ach %', 'RTS %', 'RTS % Actual'])),
+      loss: parsePercent(getField(record, ['loss', 'Loss % Ach %', 'Loss', 'Loss % Actual'])),
+      expedite: parsePercent(getField(record, ['expedite', 'Expedite Delivery Performance Ach %', 'Expedite Delivery Performance Ach Percent', 'Expedite Delivery Performance']))
     }
     
     // Preserve all other endpoint fields, including raw endpoint keys such as `Date` and `Sub-Region`

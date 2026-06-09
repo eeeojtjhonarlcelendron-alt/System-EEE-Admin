@@ -191,7 +191,7 @@ const getChartMax = (data, keys, explicitMax) => {
   return Math.ceil(maxValue * 1.2)
 }
 
-const drawSingleBarChart = (pdf, { x, y, width, height, title, subtitle, data, xKey, yKey, suffix = '', color = PDF_THEME.maroon, max }) => {
+const drawSingleBarChart = (pdf, { x, y, width, height, title, subtitle, data, xKey, yKey, suffix = '', color = PDF_THEME.maroon, max, target }) => {
   if (!data || data.length === 0) {
     drawNoData(pdf, x, y, width, height, title)
     return
@@ -209,6 +209,20 @@ const drawSingleBarChart = (pdf, { x, y, width, height, title, subtitle, data, x
 
   const maxValue = getChartMax(data, [yKey], max)
   drawYAxisGrid(pdf, plot, maxValue, suffix)
+
+  // Draw target line if provided and valid
+  const targetVal = Number(target)
+  if (Number.isFinite(targetVal) && targetVal > 0 && maxValue > 0) {
+    const targetY = plot.bottom - (Math.min(targetVal, maxValue) / maxValue) * plot.height
+    pdf.setDrawColor(...PDF_THEME.green)
+    pdf.setLineWidth(0.6)
+    pdf.line(plot.left, targetY, plot.right, targetY)
+    pdf.setFontSize(6)
+    pdf.setTextColor(...PDF_THEME.green)
+    pdf.text(formatPdfNumber(targetVal, suffix), plot.right + 3, targetY + 1.5, { align: 'left' })
+    pdf.setTextColor(...PDF_THEME.ink)
+    pdf.setLineWidth(0.4)
+  }
 
   const gap = Math.max(1.5, plot.width / Math.max(data.length, 1) * 0.25)
   const barWidth = Math.max(2, (plot.width - gap * (data.length + 1)) / data.length)
@@ -233,7 +247,7 @@ const drawSingleBarChart = (pdf, { x, y, width, height, title, subtitle, data, x
   })
 }
 
-const drawLineChart = (pdf, { x, y, width, height, title, subtitle, data, xKey, yKey, suffix = '', color = PDF_THEME.maroon, max }) => {
+const drawLineChart = (pdf, { x, y, width, height, title, subtitle, data, xKey, yKey, suffix = '', color = PDF_THEME.maroon, max, target }) => {
   if (!data || data.length === 0) {
     drawNoData(pdf, x, y, width, height, title)
     return
@@ -251,6 +265,20 @@ const drawLineChart = (pdf, { x, y, width, height, title, subtitle, data, xKey, 
 
   const maxValue = getChartMax(data, [yKey], max)
   drawYAxisGrid(pdf, plot, maxValue, suffix)
+
+  // Draw target line if provided
+  const targetVal = Number(target)
+  if (Number.isFinite(targetVal) && targetVal > 0 && maxValue > 0) {
+    const targetY = plot.bottom - (Math.min(targetVal, maxValue) / maxValue) * plot.height
+    pdf.setDrawColor(...PDF_THEME.green)
+    pdf.setLineWidth(0.6)
+    pdf.line(plot.left, targetY, plot.right, targetY)
+    pdf.setFontSize(6)
+    pdf.setTextColor(...PDF_THEME.green)
+    pdf.text(formatPdfNumber(targetVal, suffix), plot.right + 3, targetY + 1.5, { align: 'left' })
+    pdf.setTextColor(...PDF_THEME.ink)
+    pdf.setLineWidth(0.4)
+  }
 
   const pointCount = data.length
   const step = pointCount > 1 ? plot.width / (pointCount - 1) : 0
@@ -285,7 +313,7 @@ const drawLineChart = (pdf, { x, y, width, height, title, subtitle, data, xKey, 
   })
 }
 
-const drawGroupedBarChart = (pdf, { x, y, width, height, title, data, xKey, firstKey, secondKey, firstLabel = 'P7D', secondLabel = 'L7D', suffix = '', max }) => {
+const drawGroupedBarChart = (pdf, { x, y, width, height, title, data, xKey, firstKey, secondKey, firstLabel = 'P7D', secondLabel = 'L7D', suffix = '', max, target }) => {
   if (!data || data.length === 0) {
     drawNoData(pdf, x, y, width, height, title)
     return
@@ -313,6 +341,20 @@ const drawGroupedBarChart = (pdf, { x, y, width, height, title, data, xKey, firs
 
   const maxValue = getChartMax(data, [firstKey, secondKey], max)
   drawYAxisGrid(pdf, plot, maxValue, suffix)
+
+  // Draw target line if provided
+  const targetVal = Number(target)
+  if (Number.isFinite(targetVal) && targetVal > 0 && maxValue > 0) {
+    const targetY = plot.bottom - (Math.min(targetVal, maxValue) / maxValue) * plot.height
+    pdf.setDrawColor(...PDF_THEME.green)
+    pdf.setLineWidth(0.6)
+    pdf.line(plot.left, targetY, plot.right, targetY)
+    pdf.setFontSize(6)
+    pdf.setTextColor(...PDF_THEME.green)
+    pdf.text(formatPdfNumber(targetVal, suffix), plot.right + 3, targetY + 1.5, { align: 'left' })
+    pdf.setTextColor(...PDF_THEME.ink)
+    pdf.setLineWidth(0.4)
+  }
 
   const groupGap = Math.max(2, plot.width / Math.max(data.length, 1) * 0.25)
   const groupWidth = Math.max(5, (plot.width - groupGap * (data.length + 1)) / data.length)
@@ -663,7 +705,8 @@ function Dashboard() {
   const parseKpiNumber = (value) => {
     if (value === null || value === undefined || value === '') return 0
     const numeric = Number(String(value).replace(/%/g, '').trim())
-    return Number.isFinite(numeric) ? numeric : 0
+    if (!Number.isFinite(numeric)) return 0
+    return numeric > 0 && numeric <= 1 ? numeric * 100 : numeric
   }
 
   const mapKpiTrendRow = (item) => ({
@@ -740,13 +783,15 @@ function Dashboard() {
         entry.eod_compliance += eodValue
         entry.eodCount += 1
       }
-      const rtsValue = parseKpiNumber(item.rts)
-      if (item.rts !== undefined && item.rts !== null && String(item.rts).trim() !== '') {
+      const rtsValue = parseKpiNumber(item['RTS % Ach %'] ?? item.rts)
+      if ((item['RTS % Ach %'] !== undefined && item['RTS % Ach %'] !== null && String(item['RTS % Ach %']).trim() !== '') ||
+          (item.rts !== undefined && item.rts !== null && String(item.rts).trim() !== '')) {
         entry.rts += rtsValue
         entry.rtsCount += 1
       }
-      const lossValue = parseKpiNumber(item.loss)
-      if (item.loss !== undefined && item.loss !== null && String(item.loss).trim() !== '') {
+      const lossValue = parseKpiNumber(item['Loss % Ach %'] ?? item.loss)
+      if ((item['Loss % Ach %'] !== undefined && item['Loss % Ach %'] !== null && String(item['Loss % Ach %']).trim() !== '') ||
+          (item.loss !== undefined && item.loss !== null && String(item.loss).trim() !== '')) {
         entry.loss += lossValue
         entry.lossCount += 1
       }
@@ -1540,7 +1585,8 @@ function Dashboard() {
     // When a specific hub is selected in hub view and no explicit KPI date range is selected,
     // keep the legacy dashboard_metrics summary as a fallback.
     if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs' && !isHubRangeSelected) {
-      let hubMetrics = dashboardMetrics.filter(m => normalizeHub(m.hub) === selectedHubNorm)
+      const useKpiSummary = hubViewMode === 'kpi'
+      const hubMetrics = (useKpiSummary ? kpiData : dashboardMetrics).filter(m => normalizeHub(useKpiSummary ? (m.operator_hub || m.hub) : m.hub) === selectedHubNorm)
 
       if (hubMetrics.length === 0) {
         return {
@@ -1550,7 +1596,42 @@ function Dashboard() {
           onHold: 0,
           productivity: 0,
           clearFloorRate: 0,
-          scorecard: '0.0'
+          scorecard: 0,
+          lineHaulCompliance: 0,
+          codCompliance: 0,
+          processCompliance: 0,
+          rts: 0,
+          loss: 0,
+          expedite: 0
+        }
+      }
+
+      if (useKpiSummary) {
+        const total = hubMetrics.length
+        const avgScorecard = Math.round(hubMetrics.reduce((sum, item) => sum + parseKpiNumber(item.score ?? item.Scorecard), 0) / total)
+        const avgClearFloor = Math.round(hubMetrics.reduce((sum, item) => sum + parseKpiNumber(item.cfr ?? item['LM Clear Floor Rate Ach %']), 0) / total)
+        const avgSuccessRate = Math.round(hubMetrics.reduce((sum, item) => sum + parseKpiNumber(item.sr ?? item['Delivery Success Rate Actual']), 0) / total)
+        const avgLineHaul = Math.round(hubMetrics.reduce((sum, item) => sum + parseKpiNumber(item.line_haul_compliance ?? item['Line Haul Pick-up Compliance Ach %']), 0) / total)
+        const avgCod = Math.round(hubMetrics.reduce((sum, item) => sum + parseKpiNumber(item.cod_remittance ?? item['COD Compliance Ach %']), 0) / total)
+        const avgProcess = Math.round(hubMetrics.reduce((sum, item) => sum + parseKpiNumber(item.eod_compliance ?? item['Process Compliance Ach %']), 0) / total)
+        const avgRts = Math.round(hubMetrics.reduce((sum, item) => sum + parseKpiNumber(item['RTS % Ach %'] ?? item.rts ?? item['RTS %']), 0) / total)
+        const avgLoss = Math.round(hubMetrics.reduce((sum, item) => sum + parseKpiNumber(item['Loss % Ach %'] ?? item.loss ?? item['Loss %']), 0) / total)
+        const avgExpedite = Math.round(hubMetrics.reduce((sum, item) => sum + parseKpiNumber(item['Expedite Delivery Performance Ach %'] ?? item['Expedite Delivery Performance Ach Percent'] ?? item['Expedite Delivery Performance'] ?? item.expedite), 0) / total)
+
+        return {
+          successRate: avgSuccessRate,
+          activeRiders: 0,
+          delivered: 0,
+          onHold: 0,
+          productivity: 0,
+          clearFloorRate: avgClearFloor,
+          scorecard: avgScorecard,
+          lineHaulCompliance: avgLineHaul,
+          codCompliance: avgCod,
+          processCompliance: avgProcess,
+          rts: avgRts,
+          loss: avgLoss,
+          expedite: avgExpedite
         }
       }
 
@@ -1561,7 +1642,7 @@ function Dashboard() {
       const sumOnHold = hubMetrics.reduce((sum, item) => sum + (item.on_hold || 0), 0)
       const avgProductivity = Math.round(hubMetrics.reduce((sum, item) => sum + (item.productivity || 0), 0) / total)
       const avgClearFloor = Math.round(hubMetrics.reduce((sum, item) => sum + (item.clear_floor_rate || 0), 0) / total)
-      const avgScorecard = (hubMetrics.reduce((sum, item) => sum + (item.scorecard || 0), 0) / total).toFixed(1)
+      const avgScorecard = Math.round(hubMetrics.reduce((sum, item) => sum + (item.scorecard || 0), 0) / total)
 
       return {
         successRate: avgSuccessRate,
@@ -1701,7 +1782,13 @@ function Dashboard() {
           onHold: sumOnHold,
           productivity: avgProductivity,
           clearFloorRate: avgClearFloor,
-          scorecard: avgScorecard
+          scorecard: avgScorecard,
+          lineHaulCompliance: 0,
+          codCompliance: 0,
+          processCompliance: 0,
+          rts: 0,
+          loss: 0,
+          expedite: 0
         }
       }
 
@@ -1713,7 +1800,13 @@ function Dashboard() {
           onHold: 0,
           productivity: 0,
           clearFloorRate: 0,
-          scorecard: '0.0'
+          scorecard: '0.0',
+          lineHaulCompliance: 0,
+          codCompliance: 0,
+          processCompliance: 0,
+          rts: 0,
+          loss: 0,
+          expedite: 0
         }
       }
       
@@ -1740,22 +1833,79 @@ function Dashboard() {
         totalAssigned += assigned
       })
       
-      // Calculate KPI metrics
-      let totalClearFloor = 0
+      // Calculate KPI metrics from the actual KPI columns used by the KPI tab
       let totalScorecard = 0
-      let clearFloorCount = 0
       let scorecardCount = 0
-      
+      let totalClearFloor = 0
+      let clearFloorCount = 0
+      let totalSuccessRate = 0
+      let successRateCount = 0
+      let totalLineHaul = 0
+      let lineHaulCount = 0
+      let totalCodCompliance = 0
+      let codComplianceCount = 0
+      let totalProcessCompliance = 0
+      let processComplianceCount = 0
+      let totalRts = 0
+      let rtsCount = 0
+      let totalLoss = 0
+      let lossCount = 0
+      let totalExpedite = 0
+      let expediteCount = 0
+
       filteredKPI.forEach(record => {
-        const cfrValue = parseFloat(record.cfr)
-        const srValue = parseFloat(record.sr)
+        const scoreValue = parseKpiNumber(record.score ?? record.Scorecard)
+        if (!Number.isNaN(scoreValue)) {
+          totalScorecard += scoreValue
+          scorecardCount += 1
+        }
+
+        const cfrValue = parseKpiNumber(record.cfr ?? record['LM Clear Floor Rate Ach %'])
         if (!Number.isNaN(cfrValue)) {
           totalClearFloor += cfrValue
-          clearFloorCount++
+          clearFloorCount += 1
         }
+
+        const srValue = parseKpiNumber(record.sr ?? record['Delivery Success Rate Actual'])
         if (!Number.isNaN(srValue)) {
-          totalScorecard += srValue
-          scorecardCount++
+          totalSuccessRate += srValue
+          successRateCount += 1
+        }
+
+        const lineHaulValue = parseKpiNumber(record.line_haul_compliance ?? record['Line Haul Pick-up Compliance Ach %'])
+        if (!Number.isNaN(lineHaulValue)) {
+          totalLineHaul += lineHaulValue
+          lineHaulCount += 1
+        }
+
+        const codValue = parseKpiNumber(record.cod_remittance ?? record['COD Compliance Ach %'])
+        if (!Number.isNaN(codValue)) {
+          totalCodCompliance += codValue
+          codComplianceCount += 1
+        }
+
+        const processValue = parseKpiNumber(record.eod_compliance ?? record['Process Compliance Ach %'])
+        if (!Number.isNaN(processValue)) {
+          totalProcessCompliance += processValue
+          processComplianceCount += 1
+        }
+
+        const rtsValue = parseKpiNumber(record['RTS % Ach %'] ?? record.rts ?? record['RTS %'])
+        if (!Number.isNaN(rtsValue)) {
+          totalRts += rtsValue
+          rtsCount += 1
+        }
+
+        const lossValue = parseKpiNumber(record['Loss % Ach %'] ?? record.loss ?? record['Loss %'])
+        if (!Number.isNaN(lossValue)) {
+          totalLoss += lossValue
+          lossCount += 1
+        }
+
+        const expediteValue = parseKpiNumber(record['Expedite Delivery Performance Ach %'] ?? record['Expedite Delivery Performance'] ?? record.expedite)
+        if (!Number.isNaN(expediteValue)) {
+          totalExpedite += expediteValue
+          expediteCount += 1
         }
       })
       
@@ -1781,18 +1931,31 @@ function Dashboard() {
         ? Math.round(dailyProductivities.reduce((sum, val) => sum + val, 0) / dailyProductivities.length)
         : 0
       
-      const avgSuccessRate = successRates.length > 0 ? Math.round(successRates.reduce((sum, rate) => sum + rate, 0) / successRates.length) : 0
+      const avgPerformanceSuccessRate = successRates.length > 0 ? Math.round(successRates.reduce((sum, rate) => sum + rate, 0) / successRates.length) : 0
+      const avgKpiSuccessRate = successRateCount > 0 ? Math.round(totalSuccessRate / successRateCount) : 0
       const avgClearFloor = clearFloorCount > 0 ? Math.round(totalClearFloor / clearFloorCount) : 0
-      const avgScorecard = scorecardCount > 0 ? (totalScorecard / scorecardCount).toFixed(1) : '0.0'
-      
+      const avgScorecard = scorecardCount > 0 ? Math.round(totalScorecard / scorecardCount) : 0
+      const avgLineHaul = lineHaulCount > 0 ? Math.round(totalLineHaul / lineHaulCount) : 0
+      const avgCodCompliance = codComplianceCount > 0 ? Math.round(totalCodCompliance / codComplianceCount) : 0
+      const avgProcessCompliance = processComplianceCount > 0 ? Math.round(totalProcessCompliance / processComplianceCount) : 0
+      const avgRts = rtsCount > 0 ? Math.round(totalRts / rtsCount) : 0
+      const avgLoss = lossCount > 0 ? Math.round(totalLoss / lossCount) : 0
+      const avgExpedite = expediteCount > 0 ? Math.round(totalExpedite / expediteCount) : 0
+
       return {
-        successRate: avgSuccessRate,
+        successRate: avgKpiSuccessRate || avgPerformanceSuccessRate,
         activeRiders: riders.size,
         delivered: totalDelivered,
         onHold: totalOnHold,
         productivity: avgProductivity,
         clearFloorRate: avgClearFloor,
-        scorecard: avgScorecard
+        scorecard: avgScorecard,
+        lineHaulCompliance: avgLineHaul,
+        codCompliance: avgCodCompliance,
+        processCompliance: avgProcessCompliance,
+        rts: avgRts,
+        loss: avgLoss,
+        expedite: avgExpedite
       }
     }
     
@@ -1839,7 +2002,13 @@ function Dashboard() {
         onHold: avgOnHold,
         productivity: avgProductivity,
         clearFloorRate: avgClearFloor,
-        scorecard: avgScorecard
+        scorecard: avgScorecard,
+        lineHaulCompliance: 0,
+        codCompliance: 0,
+        processCompliance: 0,
+        rts: 0,
+        loss: 0,
+        expedite: 0
       }
     }
     
@@ -2005,13 +2174,13 @@ function Dashboard() {
       { key: 'line_haul_compliance', label: 'Line Haul' },
       { key: 'cod_remittance', label: 'COD Remit' },
       { key: 'eod_compliance', label: 'EOD' },
-      { key: 'rts', label: 'RTS' },
-      { key: 'loss', label: 'Loss' }
+      { key: 'RTS % Ach %', fallback: 'rts', label: 'RTS' },
+      { key: 'Loss % Ach %', fallback: 'loss', label: 'Loss' }
     ]
     
     const result = kpiFields.map(field => {
       const values = filteredKpiData
-        .map(item => item[field.key])
+        .map(item => item[field.key] ?? item[field.fallback])
         .filter(val => val !== null && val !== undefined && val !== '')
         .map(val => parsePercentage(val))
 
@@ -2039,7 +2208,8 @@ const filteredChartData = useMemo(() => {
   const parseNumeric = (value) => {
     if (value === null || value === undefined || value === '') return 0
     const numberValue = Number(String(value).replace(/%/g, '').trim())
-    return Number.isFinite(numberValue) ? numberValue : 0
+    if (!Number.isFinite(numberValue)) return 0
+    return numberValue > 0 && numberValue <= 1 ? numberValue * 100 : numberValue
   }
 
   const getKpiMetricChartData = () => {
@@ -2150,16 +2320,22 @@ const filteredChartData = useMemo(() => {
         entry.eod_compliance += parseNumeric(item.eod_compliance)
         entry.eodCount += 1
       }
-      if (item.rts !== undefined && item.rts !== null) {
-        entry.rts += parseNumeric(item.rts)
+      const rtsValue = parseNumeric(item['RTS % Ach %'] ?? item.rts)
+      if ((item['RTS % Ach %'] !== undefined && item['RTS % Ach %'] !== null && String(item['RTS % Ach %']).trim() !== '') ||
+          (item.rts !== undefined && item.rts !== null && String(item.rts).trim() !== '')) {
+        entry.rts += rtsValue
         entry.rtsCount += 1
       }
-      if (item.loss !== undefined && item.loss !== null) {
-        entry.loss += parseNumeric(item.loss)
+
+      const lossValue = parseNumeric(item['Loss % Ach %'] ?? item.loss)
+      if ((item['Loss % Ach %'] !== undefined && item['Loss % Ach %'] !== null && String(item['Loss % Ach %']).trim() !== '') ||
+          (item.loss !== undefined && item.loss !== null && String(item.loss).trim() !== '')) {
+        entry.loss += lossValue
         entry.lossCount += 1
       }
+
       const expediteValue = parseNumeric(item['Expedite Delivery Performance Ach %'] ?? item['Expedite Delivery Performance Ach Percent'] ?? item['Expedite Delivery Performance'])
-      if (expediteValue) {
+      if (expediteValue || (item['Expedite Delivery Performance Ach %'] === 0 || item['Expedite Delivery Performance Ach Percent'] === 0 || item['Expedite Delivery Performance'] === 0)) {
         entry.expedite += expediteValue
         entry.expediteCount += 1
       }
@@ -3705,8 +3881,8 @@ const clusterHubSections = useMemo(() => {
         filterInfo = [
           `Hub: ${selectedHub || 'All Hubs'}`,
           `From: ${hubFromDate || ''}    To: ${hubToDate || ''}`,
-          `Compare Date A: ${hubCompareDateA || ''}    Compare Date B: ${hubCompareDateB || ''}`,
-          `Range: ${rangeLabels[hubDeliveryTrendRange] || hubDeliveryTrendRange || ''}`
+          `Range: ${rangeLabels[hubDeliveryTrendRange] || hubDeliveryTrendRange || ''}`,
+          `Trend: ${selectedCategory || 'None'}`
         ]
       } else if (dashboardView === 'rider') {
         reportTitle = 'Rider Level Dashboard'
@@ -3738,74 +3914,133 @@ const clusterHubSections = useMemo(() => {
       // === SUMMARY STATS SECTION ===
       const comparisonData = dashboardView === 'overall' ? getComparisonData() : []
       
-      pdf.setTextColor(51, 65, 85)
-      pdf.setFontSize(12)
-      pdf.setFont(undefined, 'bold')
-      pdf.text('Summary Statistics', margin, currentY)
-      currentY += 8
-
-      // Get summary data based on view
+      const shouldShowMetrics = dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs'
       let summaryStats = []
-      if (dashboardView === 'hub' && filteredStats) {
-        summaryStats = [
-          { label: 'Success Rate', value: `${filteredStats.successRate || 0}%` },
-          { label: 'Riders', value: String(filteredStats.activeRiders || 0) },
-          { label: 'Delivered', value: String(filteredStats.delivered || 0) },
-          { label: 'On-Hold', value: String(filteredStats.onHold || 0) },
-          { label: 'Productivity', value: String(filteredStats.productivity || 0) },
-          { label: 'Clear Floor', value: `${filteredStats.clearFloorRate || 0}%` },
-          { label: 'Scorecard', value: String(filteredStats.scorecard || '0.0') }
-        ]
-      } else if (dashboardView === 'rider' && selectedRider && riderLevelData.length > 0) {
-        const rider = riderLevelData[0]
-        summaryStats = [
-          { label: 'Delivered', value: String(rider.delivered || 0) },
-          { label: 'On-Hold', value: String(rider.onHold || 0) },
-          { label: 'Success Rate', value: `${rider.successRate?.toFixed(1) || 0}%` },
-          { label: 'Productivity', value: String(rider.productivity || 0) }
-        ]
-      } else if (dashboardView === 'overall') {
-        const totalHubs = comparisonData.length
-        summaryStats = [
-          { label: 'Total Hubs', value: String(totalHubs) },
-          { label: 'Cluster', value: selectedCluster || 'All' }
-        ]
+      if (shouldShowMetrics && dashboardView === 'hub' && filteredStats) {
+        summaryStats = (hubViewMode === 'kpi')
+          ? [
+              { label: 'Scorecard', value: `${filteredStats?.scorecard || 0}%` },
+              { label: 'Clear Floor', value: `${filteredStats?.clearFloorRate || 0}%` },
+              { label: 'Success Rate', value: `${filteredStats?.successRate || 0}%` },
+              { label: 'Line Haul', value: `${filteredStats?.lineHaulCompliance || 0}%` },
+              { label: 'COD Compliance', value: `${filteredStats?.codCompliance || 0}%` },
+              { label: 'Process Compliance', value: `${filteredStats?.processCompliance || 0}%` },
+              { label: 'RTS', value: `${filteredStats?.rts || 0}%` },
+              { label: 'Loss', value: `${filteredStats?.loss || 0}%` },
+              { label: 'Expedite', value: `${filteredStats?.expedite || 0}%` }
+            ]
+          : [
+              { label: 'Success Rate', value: `${filteredStats?.successRate || 0}%` },
+              { label: 'Riders', value: String(filteredStats?.activeRiders || 0) },
+              { label: 'Delivered', value: String(filteredStats?.delivered || 0) },
+              { label: 'On-Hold', value: String(filteredStats?.onHold || 0) },
+              { label: 'Productivity', value: String(filteredStats?.productivity || 0) },
+              { label: 'Clear Floor', value: `${filteredStats?.clearFloorRate || 0}%` },
+              { label: 'Scorecard', value: String(filteredStats?.scorecard || '0.0') }
+            ]
       }
 
-      // Draw summary boxes
-      const boxWidth = 42
-      const boxHeight = 20
-      const boxSpacing = 3
-      let boxX = margin
-
-      summaryStats.forEach((stat, index) => {
-        if (boxX + boxWidth > pdfWidth - margin) {
-          boxX = margin
-          currentY += boxHeight + boxSpacing + 5
-        }
-        
-        // Box background
-        pdf.setFillColor(254, 242, 242)
-        pdf.rect(boxX, currentY, boxWidth, boxHeight, 'F')
-        pdf.setDrawColor(168, 48, 48)
-        pdf.rect(boxX, currentY, boxWidth, boxHeight, 'S')
-        
-        // Label
-        pdf.setFontSize(8)
-        pdf.setTextColor(100, 116, 139)
-        pdf.setFont(undefined, 'normal')
-        pdf.text(String(stat.label), boxX + 3, currentY + 7)
-        
-        // Value
-        pdf.setFontSize(11)
-        pdf.setTextColor(168, 48, 48)
+      if (shouldShowMetrics) {
+        pdf.setTextColor(51, 65, 85)
+        pdf.setFontSize(12)
         pdf.setFont(undefined, 'bold')
-        pdf.text(String(stat.value), boxX + 3, currentY + 15)
-        
-        boxX += boxWidth + boxSpacing
-      })
+        pdf.text('Metrics', margin, currentY)
+        currentY += 8
+      }
 
-      currentY += boxHeight + 15
+      // Determine an export-safe selected category (match current hubViewMode)
+      const exportSelectedCategory = (hubViewMode === 'kpi')
+        ? (KPI_TREND_OPTIONS.includes(selectedCategory) ? selectedCategory : KPI_TREND_OPTIONS[0])
+        : (PERFORMANCE_TREND_OPTIONS.includes(selectedCategory) ? selectedCategory : PERFORMANCE_TREND_OPTIONS[0])
+
+      const exportFilteredChartDataWithSelectedValue = filteredChartData.map(item => ({
+        ...item,
+        displayValue: Number(item[exportSelectedCategory]) || 0
+      }))
+
+      const exportHubSevenDayComparisonData = hubSevenDayComparisonData.map(item => ({
+        ...item,
+        currentPeriod: Number(item.currentPeriod) || 0,
+        priorPeriod: Number(item.priorPeriod) || 0
+      }))
+
+      const exportHubLevelGraphComparisonChartData = hubLevelGraphComparisonChartData.map(item => ({
+        ...item,
+        selectedValue: Number(item.selectedValue) || 0
+      }))
+
+      // === METRICS TABLE (when hub filter is used) ===
+      if (dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs' && filteredChartData.length > 0) {
+        const metricCards = hubViewMode === 'kpi'
+          ? [
+              { label: 'Scorecard', value: `${filteredStats?.scorecard || 0}%` },
+              { label: 'Clear Floor', value: `${filteredStats?.clearFloorRate || 0}%` },
+              { label: 'Success Rate', value: `${filteredStats?.successRate || 0}%` },
+              { label: 'Line Haul', value: `${filteredStats?.lineHaulCompliance || 0}%` },
+              { label: 'COD Compliance', value: `${filteredStats?.codCompliance || 0}%` },
+              { label: 'Process Compliance', value: `${filteredStats?.processCompliance || 0}%` },
+              { label: 'RTS', value: `${filteredStats?.rts || 0}%` },
+              { label: 'Loss', value: `${filteredStats?.loss || 0}%` },
+              { label: 'Expedite', value: `${filteredStats?.expedite || 0}%` }
+            ]
+          : [
+              { label: 'Success Rate', value: `${filteredStats?.successRate || 0}%` },
+              { label: 'Riders', value: String(filteredStats?.activeRiders || 0) },
+              { label: 'Delivered', value: String(filteredStats?.delivered || 0) },
+              { label: 'On-Hold', value: String(filteredStats?.onHold || 0) },
+              { label: 'Productivity', value: String(filteredStats?.productivity || 0) },
+              { label: 'Clear Floor', value: `${filteredStats?.clearFloorRate || 0}%` },
+              { label: 'Scorecard', value: String(filteredStats?.scorecard || '0.0') }
+            ]
+
+        if (metricCards.length > 0) {
+          currentY += 8
+          if (currentY > 250) {
+            pdf.addPage()
+            currentY = margin
+          }
+
+          const cardWidth = 42
+          const cardHeight = 20
+          const cardSpacing = 2
+          let cardX = margin
+          let cardY = currentY
+
+          pdf.setTextColor(51, 65, 85)
+          pdf.setFont(undefined, 'normal')
+          pdf.setFontSize(6)
+
+          metricCards.forEach((metric, index) => {
+            if (cardX + cardWidth > pdfWidth - margin) {
+              cardX = margin
+              cardY += cardHeight + cardSpacing
+            }
+            if (cardY + cardHeight > pageHeight - margin) {
+              pdf.addPage()
+              cardX = margin
+              cardY = margin
+            }
+
+            pdf.setFillColor(254, 242, 242)
+            pdf.rect(cardX, cardY, cardWidth, cardHeight, 'F')
+            pdf.setDrawColor(168, 48, 48)
+            pdf.rect(cardX, cardY, cardWidth, cardHeight, 'S')
+
+            pdf.setFontSize(6)
+            pdf.setTextColor(100, 116, 139)
+            pdf.text(metric.label, cardX + 3, cardY + 6)
+
+            pdf.setFontSize(8)
+            pdf.setTextColor(168, 48, 48)
+            pdf.setFont(undefined, 'bold')
+            pdf.text(metric.value || '0', cardX + 3, cardY + 15)
+
+            cardX += cardWidth + cardSpacing
+          })
+
+          currentY = cardY + cardHeight + 10
+        }
+      }
 
       // === GRAPH TEMPLATE SECTION ===
       const addPageIfNeeded = (requiredHeight = 45) => {
@@ -3895,51 +4130,66 @@ const clusterHubSections = useMemo(() => {
       }
 
       const drawHubGraphTemplate = () => {
-        drawGraphSectionHeading('Graph Template')
-
-        const trendCharts = HUB_EXPORT_METRICS.map(metric => (x, y, width, height) => {
-          drawSingleBarChart(pdf, {
-            x,
-            y,
-            width,
-            height,
-            title: metric.label,
-            subtitle: hubDeliveryTrendDateLabel,
-            data: filteredChartData,
-            xKey: 'month',
-            yKey: metric.key,
-            suffix: metric.suffix || '',
-            max: metric.suffix === '%' ? 100 : undefined
-          })
-        })
-        drawTwoColumnCharts(trendCharts, 58)
-
-        const comparisonCharts = HUB_EXPORT_METRICS.map(metric => (x, y, width, height) => {
-          drawSingleBarChart(pdf, {
-            x,
-            y,
-            width,
-            height,
-            title: `${metric.label} Comparison`,
-            data: hubLevelGraphComparison,
-            xKey: 'period',
-            yKey: metric.key,
-            suffix: metric.suffix || '',
-            max: metric.suffix === '%' ? 100 : undefined
-          })
-        })
-        drawTwoColumnCharts(comparisonCharts, 58)
-
-        addPageIfNeeded(78)
-        drawRadarChartPdf(pdf, {
+        // Performance / KPI Trend
+        drawGraphSectionHeading(hubViewMode === 'kpi' ? 'KPI Trend' : 'Performance Trend')
+        addPageIfNeeded(72)
+        drawSingleBarChart(pdf, {
           x: margin,
           y: currentY,
           width: fullChartWidth,
-          height: 72,
-          title: 'KPI Distribution',
-          data: kpiGradeData
+          height: 64,
+          title: hubViewMode === 'kpi' ? `${exportSelectedCategory || 'KPI'}` : `${exportSelectedCategory || 'Performance'}`,
+          subtitle: hubDeliveryTrendDateLabel,
+          data: exportFilteredChartDataWithSelectedValue,
+          xKey: 'month',
+          yKey: 'displayValue',
+          suffix: (['Success Rate', ...KPI_TREND_OPTIONS].includes(exportSelectedCategory) ? '%' : ''),
+          target: targets[exportSelectedCategory]
         })
-        currentY += 78
+        currentY += 72
+
+        // Last vs Prior 7 Days (export only if UI shows data - only when NO cluster selected)
+        if (!selectedCluster && exportHubSevenDayComparisonData && exportHubSevenDayComparisonData.length > 0) {
+          drawGraphSectionHeading('Last vs Prior 7 Days')
+          addPageIfNeeded(78)
+          drawGroupedBarChart(pdf, {
+            x: margin,
+            y: currentY,
+            width: fullChartWidth,
+            height: 66,
+            title: 'Last vs Prior 7 Days',
+            data: exportHubSevenDayComparisonData,
+            xKey: 'month',
+            firstKey: 'currentPeriod',
+            secondKey: 'priorPeriod',
+            suffix: (['Success Rate', ...KPI_TREND_OPTIONS].includes(exportSelectedCategory) ? '%' : ''),
+            max: (['Success Rate', ...KPI_TREND_OPTIONS].includes(exportSelectedCategory) ? 100 : undefined),
+            target: targets[exportSelectedCategory]
+          })
+          currentY += 72
+        }
+
+        // Graph Comparison (per hub or overall) - only if data exists and NO cluster selected
+        if (!selectedCluster && exportHubLevelGraphComparisonChartData && exportHubLevelGraphComparisonChartData.length > 0) {
+          drawGraphSectionHeading('Graph Comparison')
+          addPageIfNeeded(78)
+          drawSingleBarChart(pdf, {
+            x: margin,
+            y: currentY,
+            width: fullChartWidth,
+            height: 66,
+            title: 'Graph Comparison',
+            data: exportHubLevelGraphComparisonChartData,
+            xKey: 'period',
+            yKey: 'selectedValue',
+            suffix: (['Success Rate', ...KPI_TREND_OPTIONS].includes(exportSelectedCategory) ? '%' : ''),
+            max: (['Success Rate', ...KPI_TREND_OPTIONS].includes(exportSelectedCategory) ? 100 : undefined),
+            target: targets[exportSelectedCategory]
+          })
+          currentY += 78
+        }
+
+
       }
 
       const drawRiderGraphTemplate = () => {
@@ -3993,7 +4243,8 @@ const clusterHubSections = useMemo(() => {
             firstKey: chart.p7dKey,
             secondKey: chart.l7dKey,
             suffix: chart.suffix || '',
-            max: chart.max
+            max: chart.max,
+            target: targets[exportSelectedCategory]
           })
         })
 
@@ -4005,371 +4256,80 @@ const clusterHubSections = useMemo(() => {
       }
 
       if (dashboardView === 'hub') {
-        drawHubGraphTemplate()
+        // Only export hub graphs if the dashboard actually shows them
+        if (filteredChartData && filteredChartData.length > 0) {
+          drawHubGraphTemplate()
+        }
+
+        // If a cluster is selected, also export per-hub Last vs Prior and Graph Comparison
+        if (selectedCluster && clusterHubSections && clusterHubSections.length > 0) {
+          clusterHubSections.forEach((hubSection) => {
+            if (currentY > 250) {
+              pdf.addPage()
+              currentY = margin
+            }
+            pdf.setTextColor(51, 65, 85)
+            pdf.setFontSize(12)
+            pdf.setFont(undefined, 'bold')
+            pdf.text(`Hub: ${hubSection.hub}`, margin, currentY)
+            currentY += 8
+
+            // Last vs Prior 7 Days for this hub
+            if (hubSection.sevenDayData && hubSection.sevenDayData.length > 0) {
+              addPageIfNeeded(78)
+              drawGroupedBarChart(pdf, {
+                x: margin,
+                y: currentY,
+                width: fullChartWidth,
+                height: 66,
+                title: 'Last vs Prior 7 Days',
+                data: hubSection.sevenDayData,
+                xKey: 'month',
+                firstKey: 'currentPeriod',
+                secondKey: 'priorPeriod',
+                suffix: (['Success Rate', ...KPI_TREND_OPTIONS].includes(exportSelectedCategory) ? '%' : ''),
+                max: (['Success Rate', ...KPI_TREND_OPTIONS].includes(exportSelectedCategory) ? 100 : undefined),
+                target: targets[exportSelectedCategory]
+              })
+              currentY += 72
+            }
+
+            // Graph Comparison for this hub
+            if (hubSection.graphData && hubSection.graphData.length > 0) {
+              addPageIfNeeded(78)
+              drawSingleBarChart(pdf, {
+                x: margin,
+                y: currentY,
+                width: fullChartWidth,
+                height: 66,
+                title: 'Graph Comparison',
+                data: hubSection.graphData,
+                xKey: 'period',
+                yKey: 'selectedValue',
+                suffix: (['Success Rate', ...KPI_TREND_OPTIONS].includes(exportSelectedCategory) ? '%' : ''),
+                max: (['Success Rate', ...KPI_TREND_OPTIONS].includes(exportSelectedCategory) ? 100 : undefined),
+                target: targets[exportSelectedCategory]
+              })
+              currentY += 78
+            }
+
+            currentY += 8
+          })
+        }
       } else if (dashboardView === 'rider') {
-        drawRiderGraphTemplate()
+        // Only export rider graphs if rider data or riders-no-route is visible
+        if ((selectedRider && riderLevelData && riderLevelData.length > 0) || (filteredRidersNoRoute && filteredRidersNoRoute.length > 0)) {
+          drawRiderGraphTemplate()
+        }
       } else if (dashboardView === 'overall') {
-        drawOverallGraphTemplate()
+        // Only export overall graphs if comparison data exists
+        if (comparisonData && comparisonData.length > 0) {
+          drawOverallGraphTemplate()
+        }
       }
 
       // === DATA TABLE SECTION ===
-      const dataToExport = dashboardView === 'hub' 
-        ? filteredChartData 
-        : dashboardView === 'rider' 
-          ? (selectedRider ? riderLevelData : filteredRidersNoRoute)
-          : comparisonData
-
-      if (dataToExport.length > 0) {
-        addPageIfNeeded(30)
-        pdf.setTextColor(51, 65, 85)
-        pdf.setFontSize(12)
-        pdf.setFont(undefined, 'bold')
-        pdf.text('Detailed Data', margin, currentY)
-        currentY += 10
-
-        // Table header background
-        pdf.setFillColor(168, 48, 48)
-        pdf.rect(margin, currentY - 6, pdfWidth - (margin * 2), 10, 'F')
-        pdf.setTextColor(255, 255, 255)
-        pdf.setFontSize(9)
-        pdf.setFont(undefined, 'bold')
-
-        const colWidth = (pdfWidth - (margin * 2)) / 8
-        let startY = currentY
-
-        if (dashboardView === 'hub') {
-          pdf.text('Date', margin + 3, startY)
-          pdf.text('Success Rate', margin + colWidth + 3, startY)
-          pdf.text('Riders', margin + (colWidth * 2) + 3, startY)
-          pdf.text('Delivered', margin + (colWidth * 3) + 3, startY)
-          pdf.text('On-Hold', margin + (colWidth * 4) + 3, startY)
-          pdf.text('Productivity', margin + (colWidth * 5) + 3, startY)
-          pdf.text('CFR', margin + (colWidth * 6) + 3, startY)
-          pdf.text('Scorecard', margin + (colWidth * 7) + 3, startY)
-          startY += 8
-
-          pdf.setTextColor(51, 65, 85)
-          pdf.setFont(undefined, 'normal')
-          pdf.setFontSize(7)
-
-          filteredChartData.forEach((item, index) => {
-            if (startY > 280) {
-              pdf.addPage()
-              startY = 15
-            }
-            if (index % 2 === 0) {
-              pdf.setFillColor(248, 250, 252)
-              pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
-            }
-            const dateStr = item.month ? String(item.month) : 'N/A'
-            const successRate = item['Success Rate'] != null ? `${item['Success Rate']}%` : '0%'
-            const riders = item['Riders'] != null ? String(item['Riders']) : '0'
-            const delivered = item['Delivered'] != null ? String(item['Delivered']) : '0'
-            const onHold = item['On-Hold'] != null ? String(item['On-Hold']) : '0'
-            const productivity = item['Productivity'] != null ? String(item['Productivity']) : '0'
-            const cfr = item['Clear Floor Rate'] != null ? `${item['Clear Floor Rate']}%` : '0%'
-            const scorecard = item['Scorecard'] != null ? String(item['Scorecard']) : 'N/A'
-            pdf.text(dateStr, margin + 3, startY)
-            pdf.text(successRate, margin + colWidth + 3, startY)
-            pdf.text(riders, margin + (colWidth * 2) + 3, startY)
-            pdf.text(delivered, margin + (colWidth * 3) + 3, startY)
-            pdf.text(onHold, margin + (colWidth * 4) + 3, startY)
-            pdf.text(productivity, margin + (colWidth * 5) + 3, startY)
-            pdf.text(cfr, margin + (colWidth * 6) + 3, startY)
-            pdf.text(scorecard, margin + (colWidth * 7) + 3, startY)
-            startY += 6
-          })
-
-          // === KPI DISTRIBUTION SECTION ===
-          startY += 15
-          if (startY > 250) {
-            pdf.addPage()
-            startY = 15
-          }
-          pdf.setTextColor(51, 65, 85)
-          pdf.setFontSize(12)
-          pdf.setFont(undefined, 'bold')
-          pdf.text('KPI Distribution', margin, startY)
-          startY += 10
-
-          if (kpiGradeData && kpiGradeData.length > 0) {
-            pdf.setFillColor(168, 48, 48)
-            pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
-            pdf.setTextColor(255, 255, 255)
-            pdf.setFontSize(9)
-            pdf.setFont(undefined, 'bold')
-            pdf.text('Metric', margin + 3, startY)
-            pdf.text('Value', margin + colWidth + 3, startY)
-            startY += 8
-
-            pdf.setTextColor(51, 65, 85)
-            pdf.setFont(undefined, 'normal')
-            pdf.setFontSize(8)
-
-            kpiGradeData.forEach((kpi, index) => {
-              if (startY > 280) {
-                pdf.addPage()
-                startY = 15
-              }
-              if (index % 2 === 0) {
-                pdf.setFillColor(248, 250, 252)
-                pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
-              }
-              pdf.text(String(kpi.name), margin + 3, startY)
-              pdf.text(`${kpi.value}%`, margin + colWidth + 3, startY)
-              startY += 6
-            })
-          } else {
-            pdf.setTextColor(100, 116, 139)
-            pdf.setFontSize(9)
-            pdf.setFont(undefined, 'normal')
-            pdf.text('No KPI data available', margin + 3, startY)
-            startY += 6
-          }
-
-          // === RIDERS NO ROUTE SECTION ===
-          startY += 15
-          if (startY > 250) {
-            pdf.addPage()
-            startY = 15
-          }
-          pdf.setTextColor(51, 65, 85)
-          pdf.setFontSize(12)
-          pdf.setFont(undefined, 'bold')
-          pdf.text('Riders No Route', margin, startY)
-          startY += 10
-
-          if (filteredRidersNoRoute && filteredRidersNoRoute.length > 0) {
-            const ridersColWidth = (pdfWidth - (margin * 2)) / 4
-            pdf.setFillColor(168, 48, 48)
-            pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
-            pdf.setTextColor(255, 255, 255)
-            pdf.setFontSize(9)
-            pdf.setFont(undefined, 'bold')
-            pdf.text('Rider ID', margin + 3, startY)
-            pdf.text('Rider Name', margin + ridersColWidth + 3, startY)
-            pdf.text('Deployed Date', margin + (ridersColWidth * 2) + 3, startY)
-            pdf.text('Last Active', margin + (ridersColWidth * 3) + 3, startY)
-            startY += 8
-
-            pdf.setTextColor(51, 65, 85)
-            pdf.setFont(undefined, 'normal')
-            pdf.setFontSize(8)
-
-            filteredRidersNoRoute.forEach((rider, index) => {
-              if (startY > 280) {
-                pdf.addPage()
-                startY = 15
-              }
-              if (index % 2 === 0) {
-                pdf.setFillColor(248, 250, 252)
-                pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
-              }
-              pdf.text(String(rider.riderId || ''), margin + 3, startY)
-              pdf.text(String(rider.riderName || 'N/A'), margin + ridersColWidth + 3, startY)
-              pdf.text(String(rider.deploymentDate || 'N/A'), margin + (ridersColWidth * 2) + 3, startY)
-              pdf.text(String(rider.lastActive || 'N/A'), margin + (ridersColWidth * 3) + 3, startY)
-              startY += 6
-            })
-
-          } else {
-            pdf.setTextColor(100, 116, 139)
-            pdf.setFontSize(9)
-            pdf.setFont(undefined, 'normal')
-            pdf.text('No riders without route', margin + 3, startY)
-            startY += 6
-          }
-
-          // === RETENTION & ATTRITION SECTION ===
-          startY += 15
-          if (startY > 250) {
-            pdf.addPage()
-            startY = 15
-          }
-          pdf.setTextColor(51, 65, 85)
-          pdf.setFontSize(12)
-          pdf.setFont(undefined, 'bold')
-          pdf.text('Retention & Attrition Rate', margin, startY)
-          startY += 10
-
-          if (retentionMetrics && retentionMetrics.totalRiders > 0) {
-            const retentionCols = [
-              margin + 3,
-              margin + 68,
-              margin + 88,
-              margin + 110,
-              margin + 142,
-              margin + 166
-            ]
-            pdf.setFillColor(168, 48, 48)
-            pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
-            pdf.setTextColor(255, 255, 255)
-            pdf.setFontSize(8)
-            pdf.setFont(undefined, 'bold')
-            pdf.text('Hub', retentionCols[0], startY)
-            pdf.text('Total', retentionCols[1], startY)
-            pdf.text('Active', retentionCols[2], startY)
-            pdf.text('Retention %', retentionCols[3], startY)
-            pdf.text('Attrition', retentionCols[4], startY)
-            pdf.text('Attrition %', retentionCols[5], startY)
-            startY += 8
-
-            pdf.setTextColor(51, 65, 85)
-            pdf.setFont(undefined, 'normal')
-            pdf.setFontSize(7)
-
-            // Display single retention metrics row
-            pdf.setFillColor(248, 250, 252)
-            pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 8, 'F')
-            const hubLabel = pdf.splitTextToSize(String(selectedHub || 'N/A'), 60)[0] || 'N/A'
-            pdf.text(hubLabel, retentionCols[0], startY)
-            pdf.text(String(retentionMetrics.totalRiders || 0), retentionCols[1], startY)
-            pdf.text(String(retentionMetrics.activeRiders || 0), retentionCols[2], startY)
-            pdf.text(`${retentionMetrics.retentionRate || 0}%`, retentionCols[3], startY)
-            pdf.text(String(retentionMetrics.inactiveRiders || 0), retentionCols[4], startY)
-            pdf.text(`${retentionMetrics.attritionRate || 0}%`, retentionCols[5], startY)
-
-            // Show attrition riders if any
-            if (retentionMetrics.attritionRiders && retentionMetrics.attritionRiders.length > 0) {
-              startY += 15
-              if (startY > 250) {
-                pdf.addPage()
-                startY = 15
-              }
-              pdf.setFontSize(10)
-              pdf.setFont(undefined, 'bold')
-              pdf.text('Inactive Riders Breakdown', margin, startY)
-              startY += 8
-
-              // Calculate column widths for 4-column table
-              const colWidthInactive = (pdfWidth - (margin * 2)) / 4
-
-              pdf.setFillColor(168, 48, 48)
-              pdf.rect(margin, startY - 6, pdfWidth - (margin * 2), 10, 'F')
-              pdf.setTextColor(255, 255, 255)
-              pdf.setFontSize(9)
-              pdf.setFont(undefined, 'bold')
-              pdf.text('ID', margin + 3, startY)
-              pdf.text('Name', margin + colWidthInactive + 3, startY)
-              pdf.text('Last Active', margin + (colWidthInactive * 2) + 3, startY)
-              pdf.text('Status', margin + (colWidthInactive * 3) + 3, startY)
-              startY += 8
-
-              pdf.setTextColor(51, 65, 85)
-              pdf.setFont(undefined, 'normal')
-              pdf.setFontSize(8)
-
-              retentionMetrics.attritionRiders.slice(0, 15).forEach((rider, index) => {
-                if (startY > 280) {
-                  pdf.addPage()
-                  startY = 15
-                }
-                if (index % 2 === 0) {
-                  pdf.setFillColor(248, 250, 252)
-                  pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
-                }
-                pdf.text(String(rider.id), margin + 3, startY)
-                pdf.text(String(rider.name || 'N/A'), margin + colWidthInactive + 3, startY)
-                pdf.text(String(rider.lastActive), margin + (colWidthInactive * 2) + 3, startY)
-                pdf.text(String(rider.status), margin + (colWidthInactive * 3) + 3, startY)
-                startY += 6
-              })
-
-              if (retentionMetrics.attritionRiders.length > 15) {
-                pdf.setTextColor(100, 116, 139)
-                pdf.text(`... and ${retentionMetrics.attritionRiders.length - 15} more`, margin + 3, startY)
-              }
-            }
-          }
-        } else if (dashboardView === 'rider') {
-          if (selectedRider && riderLevelData.length > 0) {
-            const rider = riderLevelData[0]
-            const metrics = [
-              { label: 'Rider ID', value: rider.riderId },
-              { label: 'Rider Name', value: rider.riderName },
-              { label: 'Hub', value: rider.hub },
-              { label: 'Delivered', value: rider.delivered },
-              { label: 'On-Hold', value: rider.onHold },
-              { label: 'Success Rate', value: `${rider.successRate?.toFixed(1) || 0}%` },
-              { label: 'Productivity', value: rider.productivity }
-            ]
-
-            pdf.setTextColor(51, 65, 85)
-            pdf.setFont(undefined, 'normal')
-            pdf.setFontSize(8)
-
-            metrics.forEach((metric, index) => {
-              if (startY > 280) {
-                pdf.addPage()
-                startY = 15
-              }
-              if (index % 2 === 0) {
-                pdf.setFillColor(248, 250, 252)
-                pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
-              }
-              pdf.setFont(undefined, 'bold')
-              pdf.text(String(metric.label), margin + 3, startY)
-              pdf.setFont(undefined, 'normal')
-              pdf.text(String(metric.value), margin + colWidth + 3, startY)
-              startY += 6
-            })
-
-          } else {
-            pdf.text('Rider ID', margin + 3, startY)
-            pdf.text('Rider Name', margin + colWidth + 3, startY)
-            pdf.text('Hub', margin + (colWidth * 2) + 3, startY)
-            pdf.text('Status', margin + (colWidth * 3) + 3, startY)
-            startY += 8
-
-            pdf.setTextColor(51, 65, 85)
-            pdf.setFont(undefined, 'normal')
-            pdf.setFontSize(8)
-
-            filteredRidersNoRoute.forEach((rider, index) => {
-              if (startY > 280) {
-                pdf.addPage()
-                startY = 15
-              }
-              if (index % 2 === 0) {
-                pdf.setFillColor(248, 250, 252)
-                pdf.rect(margin, startY - 4, pdfWidth - (margin * 2), 6, 'F')
-              }
-              pdf.text(String(rider.riderId || ''), margin + 3, startY)
-              pdf.text(String(rider.riderName || 'N/A'), margin + colWidth + 3, startY)
-              pdf.text(String(rider.hub || 'N/A'), margin + (colWidth * 2) + 3, startY)
-              pdf.text(String(rider.status || 'N/A'), margin + (colWidth * 3) + 3, startY)
-              startY += 6
-            })
-          }
-        } else if (dashboardView === 'overall') {
-          // Headers for comparison data
-          pdf.setFont(undefined, 'bold')
-          pdf.text('Hub', 10, startY)
-          pdf.text('CFR P7D', 45, startY)
-          pdf.text('CFR L7D', 70, startY)
-          pdf.text('SR P7D', 95, startY)
-          pdf.text('SR L7D', 120, startY)
-          pdf.text('Prod P7D', 145, startY)
-          pdf.text('Prod L7D', 170, startY)
-          pdf.setFont(undefined, 'normal')
-          startY += 6
-
-          comparisonData.forEach((item, index) => {
-            if (startY > 280) {
-              pdf.addPage()
-              startY = 15
-            }
-            pdf.text(item.hub, 10, startY)
-            pdf.text(`${item.cfrP7D}%`, 45, startY)
-            pdf.text(`${item.cfrL7D}%`, 70, startY)
-            pdf.text(`${item.srP7D}%`, 95, startY)
-            pdf.text(`${item.srL7D}%`, 120, startY)
-            pdf.text(String(item.prodP7D), 145, startY)
-            pdf.text(String(item.prodL7D), 170, startY)
-            startY += 5
-          })
-        }
-      }
+      // Detailed data export has been removed.
 
       // Download the PDF
       const filename = dashboardView === 'hub' 
@@ -4391,7 +4351,7 @@ const clusterHubSections = useMemo(() => {
       console.error('Error exporting PDF:', error)
       showMessage('error', 'Failed to export PDF. Please try again.')
     }
-  }, [dashboardView, filteredChartData, filteredRidersNoRoute, riderLevelData, getComparisonData, filteredStats, kpiGradeData, retentionMetrics, selectedHub, hubSearchTerm, selectedCluster, selectedRider, selectedDate, riderFromDate, riderToDate, riderLevelChartData, hubLevelGraphComparison, hubDeliveryTrendDateLabel, selectedRiderRecords, performanceRecords, riderTrendRange, hubFromDate, hubToDate, hubCompareDateA, hubCompareDateB, hubDeliveryTrendRange, selectedCategory, hubDeliveryTrendTab, showMessage])
+  }, [dashboardView, filteredChartData, filteredRidersNoRoute, riderLevelData, getComparisonData, filteredStats, kpiGradeData, retentionMetrics, selectedHub, hubSearchTerm, selectedCluster, selectedRider, selectedDate, riderFromDate, riderToDate, riderLevelChartData, hubLevelGraphComparison, hubDeliveryTrendDateLabel, selectedRiderRecords, performanceRecords, riderTrendRange, hubFromDate, hubToDate, hubCompareDateA, hubCompareDateB, hubDeliveryTrendRange, selectedCategory, hubDeliveryTrendTab, showMessage, hubViewMode])
 
   const COLORS = ['#a83030', '#c94c4c', '#e07e7e', '#f0b1b1', '#742a2a']
 
@@ -4560,6 +4520,20 @@ const clusterHubSections = useMemo(() => {
               <option value="L7D">Last 7 Days</option>
               <option value="P7D">Prior 7 Days</option>
               <option value="MTD">Month to Date</option>
+            </select>
+          </div>
+
+          {/* Trend Selector */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-[hsl(220,8%,55%)]">Trend:</span>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="bg-[hsl(220,18%,18%)] border border-[hsl(220,13%,30%)] rounded-[6px] px-2 py-1 text-[10px] text-[hsl(220,15%,95%)] focus:border-[hsl(0,58%,42%)] outline-none"
+            >
+              {(hubViewMode === 'kpi' ? KPI_TREND_OPTIONS : PERFORMANCE_TREND_OPTIONS).map(option => (
+                <option key={option} value={option}>{option}</option>
+              ))}
             </select>
           </div>
 
@@ -4936,13 +4910,15 @@ const clusterHubSections = useMemo(() => {
                   eodSum += eodValue
                   eodCount += 1
                 }
-                const rtsValue = parseKpiNumber(record.rts)
-                if (record.rts !== undefined && record.rts !== null && String(record.rts).trim() !== '') {
+                const rtsValue = parseKpiNumber(record['RTS % Ach %'] ?? record.rts)
+                if ((record['RTS % Ach %'] !== undefined && record['RTS % Ach %'] !== null && String(record['RTS % Ach %']).trim() !== '') ||
+                    (record.rts !== undefined && record.rts !== null && String(record.rts).trim() !== '')) {
                   rtsSum += rtsValue
                   rtsCount += 1
                 }
-                const lossValue = parseKpiNumber(record.loss)
-                if (record.loss !== undefined && record.loss !== null && String(record.loss).trim() !== '') {
+                const lossValue = parseKpiNumber(record['Loss % Ach %'] ?? record.loss)
+                if ((record['Loss % Ach %'] !== undefined && record['Loss % Ach %'] !== null && String(record['Loss % Ach %']).trim() !== '') ||
+                    (record.loss !== undefined && record.loss !== null && String(record.loss).trim() !== '')) {
                   lossSum += lossValue
                   lossCount += 1
                 }
@@ -5020,7 +4996,7 @@ const clusterHubSections = useMemo(() => {
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
-                <h3 className="text-sm font-semibold text-white tracking-wide">Delivery Trend</h3>
+                <h3 className="text-sm font-semibold text-white tracking-wide">{hubViewMode === 'kpi' ? 'KPI Trend' : 'Performance Trend'}</h3>
               </div>
               <div className="flex items-center gap-2">
                 {/* Tabs */}
@@ -5048,16 +5024,6 @@ const clusterHubSections = useMemo(() => {
                     </button>
                   </div>
                 </div>
-                {/* Category Filter */}
-                <select 
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
-                >
-                  {(hubViewMode === 'kpi' ? KPI_TREND_OPTIONS : PERFORMANCE_TREND_OPTIONS).map(option => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={320}>
@@ -5305,7 +5271,7 @@ const clusterHubSections = useMemo(() => {
             ) : (
               <div className="flex items-center justify-center h-full">
                 <span className="text-slate-400 text-sm">
-                  {selectedCluster ? 'Delivery Trend is disabled while a cluster is selected' : 'Select a hub or date range to view trend'}
+                  {selectedCluster ? (hubViewMode === 'kpi' ? 'KPI Trend is disabled while a cluster is selected' : 'Performance Trend is disabled while a cluster is selected') : 'Select a hub or date range to view trend'}
                 </span>
               </div>
             )}
@@ -5582,15 +5548,6 @@ const clusterHubSections = useMemo(() => {
                   <div className="w-1 h-4 bg-maroon-500 rounded-full shadow-[0_0_10px_rgba(168,48,48,0.5)]"></div>
                   <h3 className="text-sm font-semibold text-white tracking-wide">Last vs Prior 7 Days</h3>
                 </div>
-                <select 
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="bg-slate-700/80 border border-slate-600/50 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-maroon-500/50 outline-none backdrop-blur-sm"
-                >
-                  {(hubViewMode === 'kpi' ? KPI_TREND_OPTIONS : PERFORMANCE_TREND_OPTIONS).map(option => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
               </div>
               <ResponsiveContainer width="100%" height={380}>
                 {hubSevenDayComparisonData.length > 0 ? (
@@ -6051,7 +6008,7 @@ const clusterHubSections = useMemo(() => {
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-maroon-500" />
-                Delivery Trend
+                {hubViewMode === 'kpi' ? 'KPI Trend' : 'Performance Trend'}
               </h3>
               {/* Tabs */}
               <div className="flex bg-slate-700/50 rounded-lg p-1">

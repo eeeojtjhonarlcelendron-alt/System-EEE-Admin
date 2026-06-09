@@ -388,25 +388,42 @@ function KPI() {
   }
 
   const handleExport = () => {
-    const exportData = filteredData.map(item => ({
-      'Date': item.date,
-      'Region': item.region,
-      'Sub Region': item.sub_region,
-      'Operator Hub': item.operator_hub,
-      'Cluster': item.cluster,
-      'Score': item.score,
-      'Grade': item.grade,
-      'Remarks': item.remarks,
-      'CFR': item.cfr,
-      'SR': item.sr,
-      '% Aging >= 4 days': item.aging_four_days,
-      'Line Haul Pick-up Compliance': item.line_haul_compliance,
-      'COD Remittance': item.cod_remittance,
-      'EOD Report Compliance': item.eod_compliance,
-      'RTS %': item.rts,
-      'Loss': item.loss,
-    }))
-    
+    // Export only currently visible table columns in the same order
+    const cols = (typeof tableColumns !== 'undefined' && Array.isArray(tableColumns) && tableColumns.length > 0)
+      ? tableColumns
+      : ['Date','Region','Sub Region','Operator Hub','Cluster','Score','Grade','Remarks','CFR','SR','% Aging >= 4 days','Line Haul Pick-up Compliance','COD Remittance','EOD Report Compliance','RTS %','Loss']
+
+    const exportData = filteredData.map(item => {
+      const out = {}
+      cols.forEach(col => {
+        const header = String(col).replace(/_/g, ' ')
+        // Prefer normalized keys where possible
+        const keyCandidates = [col, col.toLowerCase(), col.replace(/ /g, '_'), col.replace(/ /g, '').toLowerCase()]
+        let val = ''
+        for (const k of keyCandidates) {
+          if (Object.prototype.hasOwnProperty.call(item, k)) {
+            val = item[k]
+            break
+          }
+        }
+        // Fallback to some known mappings
+        if ((val === '' || val === undefined) && header === 'Region') val = item.region || item.Region || ''
+        if ((val === '' || val === undefined) && header === 'Date') val = item.date || item.Date || ''
+
+        // Format numeric values the same way the table displays them
+        if (header.toLowerCase() !== 'date') {
+          const parsed = typeof val === 'number' ? val : parseFloat(String(val || '').trim())
+          if (!Number.isNaN(parsed)) {
+            out[header] = formatPercentageValue(parsed)
+            return
+          }
+        }
+
+        out[header] = val ?? ''
+      })
+      return out
+    })
+
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'KPI Data')
