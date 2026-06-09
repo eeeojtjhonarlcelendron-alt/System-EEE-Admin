@@ -997,6 +997,148 @@ function Dashboard() {
     return Number.isFinite(numeric) ? Math.round(numeric) : 0
   }
 
+  const getHubLevelTopKpisForExport = () => {
+    const normalizeHub = v => String(v || '').trim().toLowerCase()
+    const selectedHubNorm = normalizeHub(selectedHub)
+
+    let perf = Array.isArray(performanceRecords) ? performanceRecords.slice() : []
+    let metrics = Array.isArray(dashboardMetrics) ? dashboardMetrics.slice() : []
+    let kpi = Array.isArray(kpiData) ? kpiData.slice() : []
+
+    if (selectedHub && selectedHub !== 'All Hubs') {
+      perf = perf.filter(p => normalizeHub(p.hub) === selectedHubNorm)
+      metrics = metrics.filter(m => normalizeHub(m.hub) === selectedHubNorm)
+      kpi = kpi.filter(k => normalizeHub(k.operator_hub || k.hub) === selectedHubNorm)
+    }
+
+    if (hubFromDate && hubToDate) {
+      perf = perf.filter(p => (p.date?.split('T')[0] || p.date) >= hubFromDate && (p.date?.split('T')[0] || p.date) <= hubToDate)
+      metrics = metrics.filter(m => (m.date?.split('T')[0] || m.date) >= hubFromDate && (m.date?.split('T')[0] || m.date) <= hubToDate)
+      kpi = kpi.filter(k => (k.date?.split('T')[0] || k.date) >= hubFromDate && (k.date?.split('T')[0] || k.date) <= hubToDate)
+    } else if (selectedDate) {
+      perf = perf.filter(p => (p.date?.split('T')[0] || p.date) === selectedDate)
+      metrics = metrics.filter(m => (m.date?.split('T')[0] || m.date) === selectedDate)
+      kpi = kpi.filter(k => (k.date?.split('T')[0] || k.date) === selectedDate)
+    } else if (hubDeliveryTrendRange && hubDeliveryTrendRange !== 'ALL') {
+      const metricRange = getHubMetricDateRange({
+        selectedHub,
+        hubFromDate,
+        hubToDate,
+        selectedDate,
+        hubDeliveryTrendRange,
+        metricRows: hubViewMode === 'kpi' ? kpi : metrics
+      })
+      if (metricRange && metricRange.start && metricRange.end) {
+        perf = perf.filter(p => (p.date?.split('T')[0] || p.date) >= metricRange.start && (p.date?.split('T')[0] || p.date) <= metricRange.end)
+        metrics = metrics.filter(m => (m.date?.split('T')[0] || m.date) >= metricRange.start && (m.date?.split('T')[0] || m.date) <= metricRange.end)
+        kpi = kpi.filter(k => (k.date?.split('T')[0] || k.date) >= metricRange.start && (k.date?.split('T')[0] || k.date) <= metricRange.end)
+      } else {
+        perf = []
+        metrics = []
+        kpi = []
+      }
+    }
+
+    let costSum = 0, costCount = 0
+    let delAdo = 0, dispAdo = 0, deliveredTotal = 0, assignedTotal = 0
+    let prodSum = 0, prodCount = 0
+    let fleetSum = 0, fleetCount = 0
+
+    const activeRecords = hubViewMode === 'kpi' ? kpi : perf
+    if (activeRecords.length > 0) {
+      activeRecords.forEach(r => {
+        const cp = Number(r.cost_per_parcel) || 0
+        if (cp > 0) { costSum += cp; costCount++ }
+        delAdo += Number(r.delivered_ado) || 0
+        dispAdo += Number(r.dispatched_ado) || 0
+        deliveredTotal += Number(r.delivered) || 0
+        assignedTotal += Number(r.assigned) || 0
+        prodSum += Number(r.productivity) || 0
+        if (Number(r.fleet_count)) { fleetSum += Number(r.fleet_count); fleetCount++ }
+      })
+    } else if (metrics.length > 0) {
+      metrics.forEach(m => {
+        const cp = Number(m.cost_per_parcel) || 0
+        if (cp > 0) { costSum += cp; costCount++ }
+        delAdo += Number(m.delivered_ado) || 0
+        dispAdo += Number(m.dispatched_ado) || 0
+        deliveredTotal += Number(m.delivered) || 0
+        assignedTotal += Number(m.productivity) || 0
+        prodSum += Number(m.productivity) || 0
+        prodCount++
+        if (Number(m.fleet_count)) { fleetSum += Number(m.fleet_count); fleetCount++ }
+      })
+    }
+
+    const costPerParcel = costCount > 0 ? Math.round(costSum / costCount) : 0
+    const deliveredAdo = Math.round(delAdo)
+    const dispatchedAdo = Math.round(dispAdo)
+    const deliveredProd = (perf.length > 0 || metrics.length > 0) ? Math.round(deliveredTotal / Math.max(1, (perf.length || metrics.length))) : 0
+    const assignedProd = perf.length > 0 ? Math.round(assignedTotal / Math.max(1, perf.length)) : (prodCount > 0 ? Math.round(prodSum / prodCount) : 0)
+    const fleetCountAvg = fleetCount > 0 ? Math.round(fleetSum / fleetCount) : 0
+
+    if (hubViewMode === 'kpi') {
+      let scoreSum = 0, scoreCount = 0
+      let cfrSum = 0, cfrCount = 0
+      let srSum = 0, srCount = 0
+      let lineHaulSum = 0, lineHaulCount = 0
+      let codSum = 0, codCount = 0
+      let eodSum = 0, eodCount = 0
+      let rtsSum = 0, rtsCount = 0
+      let lossSum = 0, lossCount = 0
+      let expediteSum = 0, expediteCount = 0
+
+      kpi.forEach(record => {
+        const scoreValue = parseKpiNumber(record.score)
+        if (record.score !== undefined && record.score !== null && String(record.score).trim() !== '') { scoreSum += scoreValue; scoreCount += 1 }
+        const cfrValue = parseKpiNumber(record.cfr)
+        if (record.cfr !== undefined && record.cfr !== null && String(record.cfr).trim() !== '') { cfrSum += cfrValue; cfrCount += 1 }
+        const srValue = parseKpiNumber(record.sr)
+        if (record.sr !== undefined && record.sr !== null && String(record.sr).trim() !== '') { srSum += srValue; srCount += 1 }
+        const lineHaulValue = parseKpiNumber(record.line_haul_compliance)
+        if (record.line_haul_compliance !== undefined && record.line_haul_compliance !== null && String(record.line_haul_compliance).trim() !== '') { lineHaulSum += lineHaulValue; lineHaulCount += 1 }
+        const codValue = parseKpiNumber(record.cod_remittance)
+        if (record.cod_remittance !== undefined && record.cod_remittance !== null && String(record.cod_remittance).trim() !== '') { codSum += codValue; codCount += 1 }
+        const eodValue = parseKpiNumber(record.eod_compliance)
+        if (record.eod_compliance !== undefined && record.eod_compliance !== null && String(record.eod_compliance).trim() !== '') { eodSum += eodValue; eodCount += 1 }
+        const rtsValue = parseKpiNumber(record['RTS % Ach %'] ?? record.rts)
+        if ((record['RTS % Ach %'] !== undefined && record['RTS % Ach %'] !== null && String(record['RTS % Ach %']).trim() !== '') || (record.rts !== undefined && record.rts !== null && String(record.rts).trim() !== '')) { rtsSum += rtsValue; rtsCount += 1 }
+        const lossValue = parseKpiNumber(record['Loss % Ach %'] ?? record.loss)
+        if ((record['Loss % Ach %'] !== undefined && record['Loss % Ach %'] !== null && String(record['Loss % Ach %']).trim() !== '') || (record.loss !== undefined && record.loss !== null && String(record.loss).trim() !== '')) { lossSum += lossValue; lossCount += 1 }
+        const expediteValue = parseKpiNumber(record['Expedite Delivery Performance Ach %'] ?? record['Expedite Delivery Performance Ach Percent'] ?? record['Expedite Delivery Performance'] ?? record.expedite)
+        if ((record['Expedite Delivery Performance Ach %'] !== undefined && record['Expedite Delivery Performance Ach %'] !== null && String(record['Expedite Delivery Performance Ach %']).trim() !== '') || (record['Expedite Delivery Performance Ach Percent'] !== undefined && record['Expedite Delivery Performance Ach Percent'] !== null && String(record['Expedite Delivery Performance Ach Percent']).trim() !== '') || (record['Expedite Delivery Performance'] !== undefined && record['Expedite Delivery Performance'] !== null && String(record['Expedite Delivery Performance']).trim() !== '') || (record.expedite !== undefined && record.expedite !== null && String(record.expedite).trim() !== '')) { expediteSum += expediteValue; expediteCount += 1 }
+      })
+
+      return {
+        scorecard: scoreCount > 0 ? roundGraphValue(scoreSum / scoreCount) : 0,
+        clearFloorRate: cfrCount > 0 ? roundGraphValue(cfrSum / cfrCount) : 0,
+        successRate: srCount > 0 ? roundGraphValue(srSum / srCount) : 0,
+        lineHaulCompliance: lineHaulCount > 0 ? roundGraphValue(lineHaulSum / lineHaulCount) : 0,
+        codCompliance: codCount > 0 ? roundGraphValue(codSum / codCount) : 0,
+        processCompliance: eodCount > 0 ? roundGraphValue(eodSum / eodCount) : 0,
+        rts: rtsCount > 0 ? roundGraphValue(rtsSum / rtsCount) : 0,
+        loss: lossCount > 0 ? roundGraphValue(lossSum / lossCount) : 0,
+        expedite: expediteCount > 0 ? roundGraphValue(expediteSum / expediteCount) : 0,
+        costPerParcel,
+        deliveredAdo,
+        dispatchedAdo,
+        deliveredProd,
+        assignedProd,
+        fleetCount: fleetCountAvg
+      }
+    }
+
+    return {
+      costPerParcel,
+      deliveredAdo,
+      dispatchedAdo,
+      successRate: Number(filteredStats?.successRate) || 0,
+      deliveredProd,
+      assignedProd,
+      fleetCount: fleetCountAvg
+    }
+  }
+
   const formatGraphValue = (value, metric) => {
     const rounded = roundGraphValue(value)
     const percentMetrics = [
@@ -3915,6 +4057,7 @@ const clusterHubSections = useMemo(() => {
       const comparisonData = dashboardView === 'overall' ? getComparisonData() : []
       
       const shouldShowMetrics = dashboardView === 'hub' && selectedHub && selectedHub !== 'All Hubs'
+      const exportHubLevelTopKpis = getHubLevelTopKpisForExport()
       let summaryStats = []
       if (shouldShowMetrics && dashboardView === 'hub' && filteredStats) {
         summaryStats = (hubViewMode === 'kpi')
@@ -3930,13 +4073,13 @@ const clusterHubSections = useMemo(() => {
               { label: 'Expedite', value: `${filteredStats?.expedite || 0}%` }
             ]
           : [
-              { label: 'Success Rate', value: `${filteredStats?.successRate || 0}%` },
-              { label: 'Riders', value: String(filteredStats?.activeRiders || 0) },
-              { label: 'Delivered', value: String(filteredStats?.delivered || 0) },
-              { label: 'On-Hold', value: String(filteredStats?.onHold || 0) },
-              { label: 'Productivity', value: String(filteredStats?.productivity || 0) },
-              { label: 'Clear Floor', value: `${filteredStats?.clearFloorRate || 0}%` },
-              { label: 'Scorecard', value: String(filteredStats?.scorecard || '0.0') }
+              { label: 'Cost Per Parcel', value: String(exportHubLevelTopKpis.costPerParcel || 0) },
+              { label: 'Delivered Ado', value: String(exportHubLevelTopKpis.deliveredAdo || 0) },
+              { label: 'Dispatched Ado', value: String(exportHubLevelTopKpis.dispatchedAdo || 0) },
+              { label: 'Success Rate', value: `${exportHubLevelTopKpis.successRate || 0}%` },
+              { label: 'Delivered Prod', value: String(exportHubLevelTopKpis.deliveredProd || 0) },
+              { label: 'Assigned Prod', value: String(exportHubLevelTopKpis.assignedProd || 0) },
+              { label: 'Fleet Count', value: String(exportHubLevelTopKpis.fleetCount || 0) }
             ]
       }
 
@@ -3984,13 +4127,13 @@ const clusterHubSections = useMemo(() => {
               { label: 'Expedite', value: `${filteredStats?.expedite || 0}%` }
             ]
           : [
-              { label: 'Success Rate', value: `${filteredStats?.successRate || 0}%` },
-              { label: 'Riders', value: String(filteredStats?.activeRiders || 0) },
-              { label: 'Delivered', value: String(filteredStats?.delivered || 0) },
-              { label: 'On-Hold', value: String(filteredStats?.onHold || 0) },
-              { label: 'Productivity', value: String(filteredStats?.productivity || 0) },
-              { label: 'Clear Floor', value: `${filteredStats?.clearFloorRate || 0}%` },
-              { label: 'Scorecard', value: String(filteredStats?.scorecard || '0.0') }
+              { label: 'Cost Per Parcel', value: String(exportHubLevelTopKpis.costPerParcel || 0) },
+              { label: 'Delivered Ado', value: String(exportHubLevelTopKpis.deliveredAdo || 0) },
+              { label: 'Dispatched Ado', value: String(exportHubLevelTopKpis.dispatchedAdo || 0) },
+              { label: 'Success Rate', value: `${exportHubLevelTopKpis.successRate || 0}%` },
+              { label: 'Delivered Prod', value: String(exportHubLevelTopKpis.deliveredProd || 0) },
+              { label: 'Assigned Prod', value: String(exportHubLevelTopKpis.assignedProd || 0) },
+              { label: 'Fleet Count', value: String(exportHubLevelTopKpis.fleetCount || 0) }
             ]
 
         if (metricCards.length > 0) {
