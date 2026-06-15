@@ -5435,10 +5435,23 @@ const clusterHubSections = useMemo(() => {
           clusterHubSections.length > 0 ? (
             <div className="space-y-8">
               {clusterHubSections.map(({ hub, sevenDayData, graphData }) => {
+                const sevenDayValues = sevenDayData.flatMap(item => [
+                  Number(item.currentPeriod) || 0,
+                  Number(item.priorPeriod) || 0
+                ])
+                const sevenDayMax = sevenDayValues.length > 0 ? Math.max(...sevenDayValues) : 0
+                const sevenDayDomain = ['Success Rate', 'Assigned Prod', ...KPI_TREND_OPTIONS].includes(selectedCategory)
+                  ? [0, 110]
+                  : [0, Math.max(10, Math.ceil(Math.max(sevenDayMax, Number(targets[selectedCategory]) || 0) * 1.2))]
+                const sevenDayTicks = buildTicksWithTarget(
+                  sevenDayDomain,
+                  sevenDayDomain[1] === 100 ? [0, 20, 40, 60, 80, 100] : undefined,
+                  targets[selectedCategory]
+                )
                 const graphValues = graphData.flatMap(item => Number(item.selectedValue) || 0)
                 const graphMax = graphValues.length > 0 ? Math.max(...graphValues) : 0
                 const graphDomain = ['Success Rate', 'Assigned Prod', ...KPI_TREND_OPTIONS].includes(selectedCategory)
-                  ? [0, 110]
+                  ? [0, 100]
                   : [0, Math.max(10, Math.ceil(Math.max(graphMax, Number(targets[selectedCategory]) || 0) * 1.2))]
                 const graphTicks = buildTicksWithTarget(
                   graphDomain,
@@ -5496,8 +5509,8 @@ const clusterHubSections = useMemo(() => {
                                 tickLine={false}
                                 axisLine={false}
                                 width={45}
-                                domain={graphDomain}
-                                ticks={graphTicks}
+                                domain={sevenDayDomain}
+                                ticks={sevenDayTicks}
                               />
                               <Tooltip
                                 contentStyle={{
