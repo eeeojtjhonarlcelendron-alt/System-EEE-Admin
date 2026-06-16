@@ -490,29 +490,6 @@ function KPI() {
           <h1 className="text-xl font-bold text-white">KPI Management</h1>
           <p className="text-slate-400 mt-0.5 text-xs">Track and analyze key performance indicators</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-maroon-600 hover:bg-maroon-700 text-white rounded-lg transition-all duration-200 font-medium text-xs shadow-sm hover:shadow-md hover:scale-105"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            Upload
-          </button>
-          <button
-            onClick={handleDownloadTemplate}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 font-medium text-xs hover:shadow-md"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Template
-          </button>
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-all duration-200 font-medium text-xs hover:shadow-md"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export
-          </button>
-        </div>
       </div>
 
       {/* Inline Message Notification */}
