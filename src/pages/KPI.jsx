@@ -436,14 +436,23 @@ function KPI() {
     'line_haul_compliance', 'cod_remittance', 'eod_compliance',
     'rts', 'loss'
   ]
+  const hiddenKpiColumns = [
+    'expedite',
+    'EXPEDITE',
+    'Expedite',
+    'Expedite Delivery Performance',
+    'Expedite Delivery Performance Ach %',
+    'Expedite Delivery Performance Ach Percent'
+  ]
 
   const totalPages = Math.max(1, Math.ceil(filteredData.length / rowsPerPage))
   const startIndex = (currentPage - 1) * rowsPerPage
   const paginatedData = filteredData.slice(startIndex, startIndex + rowsPerPage)
 
   const allColumns = paginatedData.length ? Object.keys(paginatedData[0]).filter(Boolean) : []
-  const displayedColumns = allColumns.filter(key => !internalKpiColumns.includes(key))
-  const tableColumns = displayedColumns.length > 0 ? displayedColumns : allColumns.filter(key => internalKpiColumns.includes(key))
+  const visibleColumns = allColumns.filter(key => !hiddenKpiColumns.includes(key))
+  const displayedColumns = visibleColumns.filter(key => !internalKpiColumns.includes(key))
+  const tableColumns = displayedColumns.length > 0 ? displayedColumns : visibleColumns.filter(key => internalKpiColumns.includes(key))
 
   const uniqueSubRegions = [...new Set(data.map(item => item.sub_region).filter(Boolean))]
   const uniqueHubs = [...new Set(data.map(item => item.operator_hub))]
